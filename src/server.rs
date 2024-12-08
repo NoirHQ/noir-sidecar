@@ -1,12 +1,15 @@
-use axum::Router;
+use axum::{Router, http::HeaderValue};
 use serde::Deserialize;
 use std::{net::SocketAddr, str::FromStr};
 use tokio::{net::TcpListener, signal};
+use tower::ServiceBuilder;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
     pub listen_address: String,
     pub port: u16,
+    pub cors: Option<ItemOrList<String>>,
 }
 
 pub struct SidecarServer {
@@ -22,6 +25,9 @@ impl SidecarServer {
         let ip_addr = std::net::IpAddr::from_str(&self.config.listen_address)?;
         let addr = SocketAddr::new(ip_addr, self.config.port);
         let listener = TcpListener::bind(addr).await?;
+
+        let cors_layer = cors_layer(self.config.cors.clone())?;
+        let router = router.layer(ServiceBuilder::new().layer(cors_layer));
 
         tracing::info!("Starting sidecar server on {}", addr);
 
@@ -54,5 +60,37 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum ItemOrList<T> {
+    Item(T),
+    List(Vec<T>),
+}
+
+impl<T> ItemOrList<T> {
+    fn into_list(self) -> Vec<T> {
+        match self {
+            ItemOrList::Item(item) => vec![item],
+            ItemOrList::List(list) => list,
+        }
+    }
+}
+
+fn cors_layer(cors: Option<ItemOrList<String>>) -> anyhow::Result<CorsLayer> {
+    let origins = cors.map(|c| c.into_list()).unwrap_or_default();
+
+    match origins.as_slice() {
+        [] => Ok(CorsLayer::new()),
+        [origin] if origin == "*" || origin == "all" => Ok(CorsLayer::permissive()),
+        origins => {
+            let list = origins
+                .iter()
+                .map(|o| HeaderValue::from_str(o))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(CorsLayer::new().allow_origin(AllowOrigin::list(list)))
+        }
     }
 }

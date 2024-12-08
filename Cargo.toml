@@ -22,5 +22,7 @@ clap = { version = "4.5.23", features = ["derive"] }
 serde = { version = "1.0.215", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 toml = "0.8.19"
+tower = { version = "0.5.1", features = ["full"] }
+tower-http = { version = "0.6.2", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
