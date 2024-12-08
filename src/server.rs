@@ -1,15 +1,23 @@
-use axum::{Router, http::HeaderValue};
+use axum::{
+    Router,
+    error_handling::HandleErrorLayer,
+    http::{HeaderValue, StatusCode},
+};
 use serde::Deserialize;
-use std::{net::SocketAddr, str::FromStr};
+use std::{net::SocketAddr, str::FromStr, time::Duration};
 use tokio::{net::TcpListener, signal};
-use tower::ServiceBuilder;
-use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower::{BoxError, ServiceBuilder};
+use tower_http::{
+    ServiceBuilderExt,
+    cors::{AllowOrigin, CorsLayer},
+};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
     pub listen_address: String,
     pub port: u16,
     pub cors: Option<ItemOrList<String>>,
+    pub request_timeout_seconds: u64,
 }
 
 pub struct SidecarServer {
@@ -25,9 +33,18 @@ impl SidecarServer {
         let ip_addr = std::net::IpAddr::from_str(&self.config.listen_address)?;
         let addr = SocketAddr::new(ip_addr, self.config.port);
         let listener = TcpListener::bind(addr).await?;
-
-        let cors_layer = cors_layer(self.config.cors.clone())?;
-        let router = router.layer(ServiceBuilder::new().layer(cors_layer));
+        let middleware = ServiceBuilder::new()
+            .layer(HandleErrorLayer::new(|err: BoxError| async move {
+                if err.is::<tower::timeout::error::Elapsed>() {
+                    StatusCode::REQUEST_TIMEOUT
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
+            }))
+            .timeout(Duration::from_secs(self.config.request_timeout_seconds))
+            .trace_for_http()
+            .layer(cors_layer(self.config.cors.clone())?);
+        let router = router.layer(middleware.into_inner());
 
         tracing::info!("Starting sidecar server on {}", addr);
 
