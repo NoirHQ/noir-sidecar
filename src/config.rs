@@ -1,3 +1,4 @@
+use crate::server::ServerConfig;
 use anyhow::Context;
 use serde::Deserialize;
 use std::fs;
@@ -6,12 +7,6 @@ use std::path;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct ServerConfig {
-    pub listen_address: String,
-    pub port: u16,
 }
 
 // read config file specified in command line

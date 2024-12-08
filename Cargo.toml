@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+axum = "0.7.9"
 clap = { version = "4.5.23", features = ["derive"] }
 serde = { version = "1.0.215", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }

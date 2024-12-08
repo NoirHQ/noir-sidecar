@@ -7,7 +7,8 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::trace!("config: {:#?}", config);
 
-    tracing::info!("Starting sidecar");
+    let server = noir_sidecar::server::SidecarServer::new(config.server);
+    server.run(noir_sidecar::router::create_router()).await?;
 
     Ok(())
 }
