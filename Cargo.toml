@@ -5,7 +5,7 @@ authors = ["code0xff <ian.jungyong.um@gmail.com>"]
 repository = "https://github.com/NoirHQ/noir-sidecar"
 description = "Noir SDK sidecar"
 license = "Apache-2.0"
-edition = "2024"
+edition = "2021"
 
 [lib]
 name = "noir_sidecar"
