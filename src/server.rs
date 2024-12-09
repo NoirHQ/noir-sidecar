@@ -1,15 +1,32 @@
+// This file is part of Noir.
+
+// Copyright (c) Haderech Pte. Ltd.
+// SPDX-License-Identifier: Apache-2.0
+
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// 	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use axum::{
-    Router,
     error_handling::HandleErrorLayer,
     http::{HeaderValue, StatusCode},
+    Router,
 };
 use serde::Deserialize;
 use std::{net::SocketAddr, str::FromStr, time::Duration};
 use tokio::{net::TcpListener, signal};
 use tower::{BoxError, ServiceBuilder};
 use tower_http::{
-    ServiceBuilderExt,
     cors::{AllowOrigin, CorsLayer},
+    ServiceBuilderExt,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -33,6 +50,7 @@ impl SidecarServer {
         let ip_addr = std::net::IpAddr::from_str(&self.config.listen_address)?;
         let addr = SocketAddr::new(ip_addr, self.config.port);
         let listener = TcpListener::bind(addr).await?;
+
         let middleware = ServiceBuilder::new()
             .layer(HandleErrorLayer::new(|err: BoxError| async move {
                 if err.is::<tower::timeout::error::Elapsed>() {
@@ -44,6 +62,7 @@ impl SidecarServer {
             .timeout(Duration::from_secs(self.config.request_timeout_seconds))
             .trace_for_http()
             .layer(cors_layer(self.config.cors.clone())?);
+
         let router = router.layer(middleware.into_inner());
 
         tracing::info!("Starting sidecar server on {}", addr);
