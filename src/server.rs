@@ -20,8 +20,9 @@ use axum::{
     error_handling::HandleErrorLayer,
     http::{HeaderValue, StatusCode},
 };
+use jsonrpc_core::MetaIoHandler;
 use serde::Deserialize;
-use std::{net::SocketAddr, str::FromStr, time::Duration};
+use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 use tokio::{net::TcpListener, signal};
 use tower::{BoxError, ServiceBuilder};
 use tower_http::{
@@ -46,7 +47,11 @@ impl SidecarServer {
         Self { config }
     }
 
-    pub async fn run(&self, client: Client) -> anyhow::Result<()> {
+    pub async fn run(
+        &self,
+        handler: Arc<MetaIoHandler<Client>>,
+        client: Client,
+    ) -> anyhow::Result<()> {
         let ip_addr = std::net::IpAddr::from_str(&self.config.listen_address)?;
         let addr = SocketAddr::new(ip_addr, self.config.port);
         let listener = TcpListener::bind(addr).await?;
@@ -63,7 +68,7 @@ impl SidecarServer {
             .trace_for_http()
             .layer(cors_layer(self.config.cors.clone())?);
 
-        let router = router::create_router(client).layer(middleware.into_inner());
+        let router = router::create_router(handler, client).layer(middleware.into_inner());
 
         tracing::info!("Starting sidecar server on {}", addr);
 

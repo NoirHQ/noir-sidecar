@@ -15,7 +15,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use noir_sidecar::client::create_ws_client;
+use noir_sidecar::{client::create_client, rpc::create_rpc_handler};
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -26,12 +27,13 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::trace!("config: {:#?}", config);
 
-    let client = create_ws_client(&config.client)
+    let client = create_client(&config.client)
         .await
-        .expect("failed to create ws client.");
+        .expect("failed to create client.");
+    let rpc_handler = Arc::new(create_rpc_handler());
 
     let server = noir_sidecar::server::SidecarServer::new(config.server);
-    server.run(client).await?;
+    server.run(rpc_handler, client).await?;
 
     Ok(())
 }

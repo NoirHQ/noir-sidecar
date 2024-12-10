@@ -38,7 +38,7 @@ pub struct Client {
 
 impl Metadata for Client {}
 
-pub async fn create_ws_client(config: &ClientConfig) -> Result<Client, ClientError> {
+pub async fn create_client(config: &ClientConfig) -> Result<Client, ClientError> {
     let client = HttpClientBuilder::default()
         .request_timeout(
             config
