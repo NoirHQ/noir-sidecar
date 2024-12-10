@@ -20,9 +20,9 @@ pub mod cosmos;
 use crate::client::Client;
 use axum::{extract::State, http::StatusCode, Json};
 use cosmos::{Cosmos, CosmosImpl};
-use jsonrpc_core::{Error, MetaIoHandler};
+use jsonrpc_core::{Error, ErrorCode, MetaIoHandler};
 use serde_json::Value;
-use std::sync::Arc;
+use std::{fmt::Display, sync::Arc};
 
 pub fn create_rpc_handler() -> MetaIoHandler<Client> {
     let mut io = MetaIoHandler::<Client>::default();
@@ -52,4 +52,12 @@ pub async fn handle_rpc_request(
         StatusCode::OK,
         serde_json::from_str::<Value>(&response).map(Json).unwrap(),
     )
+}
+
+pub fn internal_error(message: impl Display) -> Error {
+    Error {
+        code: ErrorCode::InternalError,
+        message: format!("{}: {}", ErrorCode::InternalError.description(), message),
+        data: None,
+    }
 }

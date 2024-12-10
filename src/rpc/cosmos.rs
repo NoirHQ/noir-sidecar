@@ -15,13 +15,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::{client::Client, rpc::internal_error};
 use jsonrpc_core::{BoxFuture, Error};
 use jsonrpc_derive::rpc;
-use jsonrpsee::{core::client::ClientT, rpc_params};
+use jsonrpsee::core::{client::ClientT, params::ArrayParams};
 use parity_scale_codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
-
-use crate::client::Client;
 
 #[derive(Debug, Clone, Decode, Encode, Serialize, Deserialize)]
 pub struct ChainInfo {
@@ -45,14 +44,26 @@ impl Cosmos for CosmosImpl {
     type Metadata = Client;
 
     fn chain_info(&self, meta: Self::Metadata) -> BoxFuture<Result<ChainInfo, Error>> {
-        let params = rpc_params!([""]);
+        let mut params = ArrayParams::new();
+        params.insert("CosmosRuntimeApi_chain_info").unwrap();
+        params.insert("").unwrap();
+
         let client = meta.client.clone();
 
         Box::pin(async move {
-            client
-                .request("cosmos_chainInfo", params)
-                .await
-                .map_err(|_| Error::internal_error())
+            let mut result: String = client.request("state_call", params).await.map_err(|e| {
+                tracing::error!("{}", e);
+                internal_error(e.to_string())
+            })?;
+
+            if result.starts_with("0x") {
+                result = result.strip_prefix("0x").map(ToString::to_string).unwrap();
+            }
+
+            let bytes = hex::decode(result).map_err(internal_error)?;
+            let chain_info = ChainInfo::decode(&mut &bytes[..]).map_err(internal_error)?;
+
+            Ok(chain_info)
         })
     }
 }
