@@ -21,11 +21,14 @@ use jsonrpsee::{
     http_client::{HttpClient, HttpClientBuilder},
 };
 use serde::Deserialize;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClientConfig {
     endpoint: String,
+    request_timeout_seconds: Option<u64>,
+    max_concurrent_requests: Option<usize>,
+    max_response_size: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -37,6 +40,14 @@ impl Metadata for Client {}
 
 pub async fn create_ws_client(config: &ClientConfig) -> Result<Client, ClientError> {
     let client = HttpClientBuilder::default()
+        .request_timeout(
+            config
+                .request_timeout_seconds
+                .map(Duration::from_secs)
+                .unwrap_or(Duration::from_secs(30)),
+        )
+        .max_concurrent_requests(config.max_concurrent_requests.unwrap_or(2048))
+        .max_response_size(config.max_response_size.unwrap_or(20 * 1024 * 1024))
         .build(config.endpoint.clone())
         .unwrap();
 
