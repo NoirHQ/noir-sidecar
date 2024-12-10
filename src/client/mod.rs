@@ -15,23 +15,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use noir_sidecar::client::create_ws_client;
+use jsonrpc_core::Metadata;
+use jsonrpsee::{
+    core::ClientError,
+    http_client::{HttpClient, HttpClientBuilder},
+};
+use serde::Deserialize;
+use std::sync::Arc;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    noir_sidecar::logger::enable_logger();
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClientConfig {
+    endpoint: String,
+}
 
-    let args = noir_sidecar::cli::parse_args();
-    let config = noir_sidecar::config::read_config(&args.config)?;
+#[derive(Debug, Clone)]
+pub struct Client {
+    pub client: Arc<HttpClient>,
+}
 
-    tracing::trace!("config: {:#?}", config);
+impl Metadata for Client {}
 
-    let client = create_ws_client(&config.client)
-        .await
-        .expect("failed to create ws client.");
+pub async fn create_ws_client(config: &ClientConfig) -> Result<Client, ClientError> {
+    let client = HttpClientBuilder::default()
+        .build(config.endpoint.clone())
+        .unwrap();
 
-    let server = noir_sidecar::server::SidecarServer::new(config.server);
-    server.run(client).await?;
-
-    Ok(())
+    Ok(Client {
+        client: Arc::new(client),
+    })
 }

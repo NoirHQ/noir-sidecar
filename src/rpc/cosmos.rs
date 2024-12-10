@@ -15,10 +15,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use jsonrpc_core::Error;
+use jsonrpc_core::{BoxFuture, Error};
 use jsonrpc_derive::rpc;
+use jsonrpsee::{core::client::ClientT, rpc_params};
 use parity_scale_codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
+
+use crate::client::Client;
 
 #[derive(Debug, Clone, Decode, Encode, Serialize, Deserialize)]
 pub struct ChainInfo {
@@ -30,19 +33,26 @@ pub struct ChainInfo {
 
 #[rpc]
 pub trait Cosmos {
-    #[rpc(name = "cosmos_chainInfo")]
-    fn chain_info(&self) -> Result<ChainInfo, Error>;
+    type Metadata;
+
+    #[rpc(meta, name = "cosmos_chainInfo")]
+    fn chain_info(&self, meta: Self::Metadata) -> BoxFuture<Result<ChainInfo, Error>>;
 }
 
 pub struct CosmosImpl;
 
 impl Cosmos for CosmosImpl {
-    fn chain_info(&self) -> Result<ChainInfo, Error> {
-        Ok(ChainInfo {
-            chain_id: "test".to_string(),
-            bech32_prefix: "test".to_string(),
-            name: "test".to_string(),
-            version: "test".to_string(),
+    type Metadata = Client;
+
+    fn chain_info(&self, meta: Self::Metadata) -> BoxFuture<Result<ChainInfo, Error>> {
+        let params = rpc_params!([""]);
+        let client = meta.client.clone();
+
+        Box::pin(async move {
+            client
+                .request("cosmos_chainInfo", params)
+                .await
+                .map_err(|_| Error::internal_error())
         })
     }
 }

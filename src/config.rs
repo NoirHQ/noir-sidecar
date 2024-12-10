@@ -15,6 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::client::ClientConfig;
 use crate::server::ServerConfig;
 use anyhow::Context;
 use serde::Deserialize;
@@ -24,6 +25,7 @@ use std::path;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
+    pub client: ClientConfig,
 }
 
 // read config file specified in command line

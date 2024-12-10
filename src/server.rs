@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::router;
+use crate::{client::Client, router};
 use axum::{
     error_handling::HandleErrorLayer,
     http::{HeaderValue, StatusCode},
@@ -46,7 +46,7 @@ impl SidecarServer {
         Self { config }
     }
 
-    pub async fn run(&self) -> anyhow::Result<()> {
+    pub async fn run(&self, client: Client) -> anyhow::Result<()> {
         let ip_addr = std::net::IpAddr::from_str(&self.config.listen_address)?;
         let addr = SocketAddr::new(ip_addr, self.config.port);
         let listener = TcpListener::bind(addr).await?;
@@ -63,7 +63,7 @@ impl SidecarServer {
             .trace_for_http()
             .layer(cors_layer(self.config.cors.clone())?);
 
-        let router = router::create_router().layer(middleware.into_inner());
+        let router = router::create_router(client).layer(middleware.into_inner());
 
         tracing::info!("Starting sidecar server on {}", addr);
 

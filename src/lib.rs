@@ -16,6 +16,7 @@
 // limitations under the License.
 
 pub mod cli;
+pub mod client;
 pub mod config;
 pub mod logger;
 pub mod router;

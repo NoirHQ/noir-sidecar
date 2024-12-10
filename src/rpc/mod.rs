@@ -17,14 +17,15 @@
 
 pub mod cosmos;
 
+use crate::client::Client;
 use axum::{extract::State, http::StatusCode, Json};
 use cosmos::{Cosmos, CosmosImpl};
-use jsonrpc_core::{Error, IoHandler};
+use jsonrpc_core::{Error, MetaIoHandler};
 use serde_json::Value;
 use std::sync::Arc;
 
-pub fn create_rpc_handler() -> IoHandler {
-    let mut io = IoHandler::<()>::default();
+pub fn create_rpc_handler() -> MetaIoHandler<Client> {
+    let mut io = MetaIoHandler::<Client>::default();
 
     io.extend_with(CosmosImpl.to_delegate());
 
@@ -32,12 +33,12 @@ pub fn create_rpc_handler() -> IoHandler {
 }
 
 pub async fn handle_rpc_request(
-    State(handler): State<Arc<IoHandler>>,
+    State((handler, client)): State<(Arc<MetaIoHandler<Client>>, Client)>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
     let request = serde_json::to_string(&payload).unwrap();
 
-    let response = match handler.handle_request(&request).await {
+    let response = match handler.handle_request(&request, client).await {
         Some(response) => response,
         None => {
             return (

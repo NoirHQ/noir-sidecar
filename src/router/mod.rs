@@ -15,18 +15,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::rpc::{create_rpc_handler, handle_rpc_request};
+use crate::{
+    client::Client,
+    rpc::{create_rpc_handler, handle_rpc_request},
+};
 use axum::{
     routing::{get, post},
     Router,
 };
 use std::sync::Arc;
 
-pub fn create_router() -> Router {
+pub fn create_router(client: Client) -> Router {
     let rpc_handler = Arc::new(create_rpc_handler());
 
     Router::new()
         .route("/health", get(|| async { "OK" }))
         .route("/jsonrpc", post(handle_rpc_request))
-        .with_state(rpc_handler)
+        .with_state((rpc_handler, client))
 }
