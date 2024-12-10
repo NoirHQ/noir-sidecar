@@ -18,7 +18,7 @@
 use jsonrpc_core::Metadata;
 use jsonrpsee::{
     core::ClientError,
-    http_client::{HttpClient, HttpClientBuilder},
+    ws_client::{WsClient, WsClientBuilder},
 };
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
@@ -27,28 +27,36 @@ use std::{sync::Arc, time::Duration};
 pub struct ClientConfig {
     endpoint: String,
     request_timeout_seconds: Option<u64>,
+    connection_timeout_seconds: Option<u64>,
     max_concurrent_requests: Option<usize>,
     max_response_size: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Client {
-    pub client: Arc<HttpClient>,
+    pub client: Arc<WsClient>,
 }
 
 impl Metadata for Client {}
 
 pub async fn create_client(config: &ClientConfig) -> Result<Client, ClientError> {
-    let client = HttpClientBuilder::default()
+    let client = WsClientBuilder::default()
         .request_timeout(
             config
                 .request_timeout_seconds
                 .map(Duration::from_secs)
                 .unwrap_or(Duration::from_secs(30)),
         )
+        .connection_timeout(
+            config
+                .connection_timeout_seconds
+                .map(Duration::from_secs)
+                .unwrap_or(Duration::from_secs(30)),
+        )
         .max_concurrent_requests(config.max_concurrent_requests.unwrap_or(2048))
         .max_response_size(config.max_response_size.unwrap_or(20 * 1024 * 1024))
         .build(config.endpoint.clone())
+        .await
         .unwrap();
 
     Ok(Client {
