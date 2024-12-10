@@ -35,15 +35,7 @@ pub async fn handle_rpc_request(
     State(handler): State<Arc<IoHandler>>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
-    let request = match serde_json::to_string(&payload) {
-        Ok(request) => request,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::to_value(Error::invalid_request()).unwrap()),
-            )
-        }
-    };
+    let request = serde_json::to_string(&payload).unwrap();
 
     let response = match handler.handle_request(&request).await {
         Some(response) => response,
@@ -54,15 +46,9 @@ pub async fn handle_rpc_request(
             )
         }
     };
-    let response = match serde_json::from_str::<Value>(&response) {
-        Ok(response) => Json(response),
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::to_value(Error::internal_error()).unwrap()),
-            )
-        }
-    };
 
-    (StatusCode::OK, response)
+    (
+        StatusCode::OK,
+        serde_json::from_str::<Value>(&response).map(Json).unwrap(),
+    )
 }
