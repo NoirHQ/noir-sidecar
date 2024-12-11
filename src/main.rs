@@ -30,10 +30,10 @@ async fn main() -> anyhow::Result<()> {
     let client = create_client(&config.client)
         .await
         .expect("failed to create client.");
-    let rpc_handler = Arc::new(create_rpc_handler());
+    let rpc_handler = Arc::new(create_rpc_handler(client));
 
     let server = noir_sidecar::server::SidecarServer::new(config.server);
-    server.run(rpc_handler, client).await?;
+    server.run(rpc_handler).await?;
 
     Ok(())
 }

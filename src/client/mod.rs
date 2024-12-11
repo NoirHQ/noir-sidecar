@@ -15,7 +15,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use jsonrpc_core::Metadata;
 use jsonrpsee::{
     core::ClientError,
     ws_client::{WsClient, WsClientBuilder},
@@ -36,8 +35,6 @@ pub struct ClientConfig {
 pub struct Client {
     pub client: Arc<WsClient>,
 }
-
-impl Metadata for Client {}
 
 pub async fn create_client(config: &ClientConfig) -> Result<Client, ClientError> {
     let client = WsClientBuilder::default()

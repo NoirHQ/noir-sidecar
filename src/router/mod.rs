@@ -20,12 +20,12 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use jsonrpc_core::MetaIoHandler;
+use jsonrpsee::RpcModule;
 use std::sync::Arc;
 
-pub fn create_router(rpc_handler: Arc<MetaIoHandler<Client>>, client: Client) -> Router {
+pub fn create_router(module: Arc<RpcModule<Client>>) -> Router {
     Router::new()
         .route("/health", get(|| async { "OK" }))
         .route("/jsonrpc", post(handle_rpc_request))
-        .with_state((rpc_handler, client))
+        .with_state(module)
 }
