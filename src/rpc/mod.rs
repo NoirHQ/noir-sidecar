@@ -15,19 +15,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod cosmos;
+pub mod solana;
 
 use crate::client::Client;
 use axum::{extract::State, http::StatusCode, Json};
-use cosmos::{Cosmos, CosmosImpl};
 use jsonrpc_core::{Error, ErrorCode, MetaIoHandler};
 use serde_json::Value;
+use solana::{Solana, SolanaImpl};
 use std::{fmt::Display, sync::Arc};
 
 pub fn create_rpc_handler() -> MetaIoHandler<Client> {
     let mut io = MetaIoHandler::<Client>::default();
 
-    io.extend_with(CosmosImpl.to_delegate());
+    io.extend_with(SolanaImpl.to_delegate());
 
     io
 }
