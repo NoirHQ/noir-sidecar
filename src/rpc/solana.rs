@@ -15,11 +15,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::client::Client;
+use crate::{client::Client, rpc::error};
 use jsonrpsee::{
-    core::{async_trait, RpcResult},
+    core::{async_trait, client::ClientT, params::ArrayParams, RpcResult},
     proc_macros::rpc,
+    types::ErrorCode,
 };
+use noir_core_primitives::{Hash, Header};
 use serde::{Deserialize, Serialize};
 use solana_account_decoder::UiAccount;
 use solana_rpc_client_api::{
@@ -160,7 +162,7 @@ impl SolanaServer for Solana {
         pubkey_str: String,
         config: Option<RpcAccountInfoConfig>,
     ) -> RpcResult<RpcResponse<Option<UiAccount>>> {
-        tracing::info!("get_account_info: {:?}, config: {:?}", pubkey_str, config);
+        tracing::debug!("getAccountInfo: {:?}, config: {:?}", pubkey_str, config);
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -176,7 +178,7 @@ impl SolanaServer for Solana {
         pubkey_strs: Vec<String>,
         config: Option<RpcAccountInfoConfig>,
     ) -> RpcResult<RpcResponse<Vec<Option<UiAccount>>>> {
-        tracing::info!("get_multiple_accounts: {:?}, {:?}", pubkey_strs, config);
+        tracing::debug!("getMultipleAccounts: {:?}, {:?}", pubkey_strs, config);
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -192,7 +194,7 @@ impl SolanaServer for Solana {
         program_id_str: String,
         config: Option<RpcProgramAccountsConfig>,
     ) -> RpcResult<OptionalContext<Vec<RpcKeyedAccount>>> {
-        tracing::info!("get_program_accounts: {:?}. {:?}", program_id_str, config);
+        tracing::debug!("getProgramAccounts: {:?}. {:?}", program_id_str, config);
 
         Ok(OptionalContext::NoContext(Vec::default()))
     }
@@ -203,8 +205,8 @@ impl SolanaServer for Solana {
         token_account_filter: RpcTokenAccountsFilter,
         config: Option<RpcAccountInfoConfig>,
     ) -> RpcResult<RpcResponse<Vec<RpcKeyedAccount>>> {
-        tracing::info!(
-            "get_token_accounts_by_owner: {:?}, {:?}, {:?}",
+        tracing::debug!(
+            "getTokenAccountsByOwner: {:?}, {:?}, {:?}",
             owner_str,
             token_account_filter,
             config
@@ -223,7 +225,31 @@ impl SolanaServer for Solana {
         &self,
         config: Option<RpcContextConfig>,
     ) -> RpcResult<RpcResponse<RpcBlockhash>> {
-        tracing::info!("get_latest_blockhash: {:?}", config);
+        tracing::debug!("getLatestBlockhash: {:?}", config);
+
+        if !self.client.client.is_connected() {
+            return Err(error(
+                ErrorCode::InternalError,
+                Some("Client disconnected".to_string()),
+            ));
+        }
+
+        let hash: Hash = self
+            .client
+            .client
+            .request("chain_getFinalizedHead", ArrayParams::new())
+            .await
+            .map_err(|e| error(ErrorCode::InternalError, Some(e.to_string())))?;
+
+        let mut params = ArrayParams::new();
+        params.insert(hash).unwrap();
+
+        let Header { number, .. } = self
+            .client
+            .client
+            .request("chain_getHeader", params)
+            .await
+            .map_err(|e| error(ErrorCode::InternalError, Some(e.to_string())))?;
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -231,8 +257,8 @@ impl SolanaServer for Solana {
                 api_version: None,
             },
             value: RpcBlockhash {
-                blockhash: String::default(),
-                last_valid_block_height: 0,
+                blockhash: bs58::encode(hash.as_bytes()).into_string(),
+                last_valid_block_height: number as u64,
             },
         })
     }
@@ -242,7 +268,7 @@ impl SolanaServer for Solana {
         data: String,
         config: Option<RpcSendTransactionConfig>,
     ) -> RpcResult<String> {
-        tracing::info!("send_transaction: {:?}, {:?}", data, config);
+        tracing::debug!("sendTransaction: {:?}, {:?}", data, config);
 
         Ok(String::default())
     }
@@ -252,7 +278,7 @@ impl SolanaServer for Solana {
         data: String,
         config: Option<RpcSimulateTransactionConfig>,
     ) -> RpcResult<RpcResponse<RpcSimulateTransactionResult>> {
-        tracing::info!("simulate_transaction: {:?}, {:?}", data, config);
+        tracing::debug!("simulateTransaction: {:?}, {:?}", data, config);
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -276,7 +302,7 @@ impl SolanaServer for Solana {
         address_strs: Vec<String>,
         config: Option<RpcEpochConfig>,
     ) -> RpcResult<Vec<Option<RpcInflationReward>>> {
-        tracing::info!("get_inflation_reward: {:?}, {:?}", address_strs, config);
+        tracing::debug!("getInflationReward: {:?}, {:?}", address_strs, config);
 
         Ok(Vec::default())
     }
@@ -286,7 +312,7 @@ impl SolanaServer for Solana {
         data: String,
         config: Option<RpcContextConfig>,
     ) -> RpcResult<RpcResponse<Option<u64>>> {
-        tracing::info!("get_fee_for_message: {:?}, {:?}", data, config);
+        tracing::debug!("getFeeForMessage: {:?}, {:?}", data, config);
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -302,7 +328,7 @@ impl SolanaServer for Solana {
         pubkey_str: String,
         config: Option<RpcContextConfig>,
     ) -> RpcResult<RpcResponse<u64>> {
-        tracing::info!("get_balance: {:?}, {:?}", pubkey_str, config);
+        tracing::debug!("getBalance: {:?}, {:?}", pubkey_str, config);
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -314,13 +340,30 @@ impl SolanaServer for Solana {
     }
 
     async fn get_genesis_hash(&self) -> RpcResult<String> {
-        tracing::info!("get_genesis_hash");
+        tracing::debug!("getGenesisHash");
 
-        Ok(String::default())
+        if !self.client.client.is_connected() {
+            return Err(error(
+                ErrorCode::InternalError,
+                Some("Client disconnected".to_string()),
+            ));
+        }
+
+        let mut params = ArrayParams::new();
+        params.insert(0).unwrap();
+
+        let hash: Hash = self
+            .client
+            .client
+            .request("chain_getBlockHash", params)
+            .await
+            .map_err(|e| error(ErrorCode::InternalError, Some(e.to_string())))?;
+
+        Ok(format!("{:x?}", hash))
     }
 
     async fn get_epoch_info(&self, config: Option<RpcContextConfig>) -> RpcResult<EpochInfo> {
-        tracing::info!("get_epoch_info: {:?}", config);
+        tracing::debug!("getEpochInfo: {:?}", config);
 
         Ok(EpochInfo {
             epoch: 0,
@@ -333,7 +376,7 @@ impl SolanaServer for Solana {
     }
 
     async fn get_transaction_count(&self, config: Option<RpcContextConfig>) -> RpcResult<u64> {
-        tracing::info!("get_transaction_count: {:?}", config);
+        tracing::debug!("getTransactionCount: {:?}", config);
 
         Ok(0)
     }

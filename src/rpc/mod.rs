@@ -25,7 +25,7 @@ use jsonrpsee::{
 };
 use serde_json::Value;
 use solana::{Solana, SolanaServer};
-use std::{fmt::Display, sync::Arc};
+use std::sync::Arc;
 
 pub fn create_rpc_handler(client: Client) -> RpcModule<()> {
     let mut module = RpcModule::new(());
@@ -48,7 +48,10 @@ pub async fn handle_rpc_request(
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::to_value(internal_error(e, None)).unwrap()),
+                Json(
+                    serde_json::to_value(error(ErrorCode::InternalError, Some(e.to_string())))
+                        .unwrap(),
+                ),
             )
         }
     };
@@ -59,10 +62,6 @@ pub async fn handle_rpc_request(
     )
 }
 
-pub fn internal_error(message: impl Display, data: Option<Value>) -> ErrorObjectOwned {
-    ErrorObject::owned(
-        ErrorCode::InternalError.code(),
-        format!("{}: {}", ErrorCode::InternalError.message(), message),
-        data,
-    )
+pub fn error(error: ErrorCode, data: Option<String>) -> ErrorObjectOwned {
+    ErrorObject::owned(error.code(), error.message(), data)
 }
