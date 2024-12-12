@@ -19,31 +19,36 @@ pub mod solana;
 
 use crate::client::Client;
 use axum::{extract::State, http::StatusCode, Json};
-use jsonrpc_core::{Error, ErrorCode, MetaIoHandler};
+use jsonrpsee::{
+    types::{ErrorCode, ErrorObject, ErrorObjectOwned},
+    RpcModule,
+};
 use serde_json::Value;
-use solana::{Solana, SolanaImpl};
+use solana::{Solana, SolanaServer};
 use std::{fmt::Display, sync::Arc};
 
-pub fn create_rpc_handler() -> MetaIoHandler<Client> {
-    let mut io = MetaIoHandler::<Client>::default();
+pub fn create_rpc_handler(client: Client) -> RpcModule<()> {
+    let mut module = RpcModule::new(());
 
-    io.extend_with(SolanaImpl.to_delegate());
+    module
+        .merge(Solana::new(client.clone()).into_rpc())
+        .unwrap();
 
-    io
+    module
 }
 
 pub async fn handle_rpc_request(
-    State((handler, client)): State<(Arc<MetaIoHandler<Client>>, Client)>,
+    State(module): State<Arc<RpcModule<()>>>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
     let request = serde_json::to_string(&payload).unwrap();
 
-    let response = match handler.handle_request(&request, client).await {
-        Some(response) => response,
-        None => {
+    let (response, _) = match module.raw_json_request(&request, 1).await {
+        Ok((response, stream)) => (response, stream),
+        Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::to_value(Error::internal_error()).unwrap()),
+                Json(serde_json::to_value(internal_error(e, None)).unwrap()),
             )
         }
     };
@@ -54,10 +59,10 @@ pub async fn handle_rpc_request(
     )
 }
 
-pub fn internal_error(message: impl Display) -> Error {
-    Error {
-        code: ErrorCode::InternalError,
-        message: format!("{}: {}", ErrorCode::InternalError.description(), message),
-        data: None,
-    }
+pub fn internal_error(message: impl Display, data: Option<Value>) -> ErrorObjectOwned {
+    ErrorObject::owned(
+        ErrorCode::InternalError.code(),
+        format!("{}: {}", ErrorCode::InternalError.message(), message),
+        data,
+    )
 }

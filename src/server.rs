@@ -15,12 +15,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{client::Client, router};
+use crate::router;
 use axum::{
     error_handling::HandleErrorLayer,
     http::{HeaderValue, StatusCode},
 };
-use jsonrpc_core::MetaIoHandler;
+use jsonrpsee::RpcModule;
 use serde::Deserialize;
 use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 use tokio::{net::TcpListener, signal};
@@ -47,11 +47,7 @@ impl SidecarServer {
         Self { config }
     }
 
-    pub async fn run(
-        &self,
-        handler: Arc<MetaIoHandler<Client>>,
-        client: Client,
-    ) -> anyhow::Result<()> {
+    pub async fn run(&self, module: Arc<RpcModule<()>>) -> anyhow::Result<()> {
         let ip_addr = std::net::IpAddr::from_str(&self.config.listen_address)?;
         let addr = SocketAddr::new(ip_addr, self.config.port);
         let listener = TcpListener::bind(addr).await?;
@@ -68,7 +64,7 @@ impl SidecarServer {
             .trace_for_http()
             .layer(cors_layer(self.config.cors.clone())?);
 
-        let router = router::create_router(handler, client).layer(middleware.into_inner());
+        let router = router::create_router(module).layer(middleware.into_inner());
 
         tracing::info!("Starting sidecar server on {}", addr);
 

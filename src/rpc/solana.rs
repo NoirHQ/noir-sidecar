@@ -16,20 +16,32 @@
 // limitations under the License.
 
 use crate::client::Client;
-use jsonrpc_core::{BoxFuture, Result};
-use jsonrpc_derive::rpc;
+use jsonrpsee::{
+    core::{async_trait, RpcResult},
+    proc_macros::rpc,
+};
 use serde::{Deserialize, Serialize};
 use solana_account_decoder::UiAccount;
 use solana_rpc_client_api::{
-    config::*,
-    response::{Response as RpcResponse, *},
+    config::{
+        RpcAccountInfoConfig, RpcContextConfig, RpcEpochConfig, RpcProgramAccountsConfig,
+        RpcSendTransactionConfig, RpcSimulateTransactionConfig, RpcTokenAccountsFilter,
+    },
+    response::{
+        OptionalContext, Response as RpcResponse, RpcBlockhash, RpcInflationReward,
+        RpcKeyedAccount, RpcResponseContext, RpcSimulateTransactionResult,
+    },
 };
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub type Slot = u64;
+
+pub type Epoch = u64;
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EpochInfo {
     /// The current epoch
-    pub epoch: u64,
+    pub epoch: Epoch,
 
     /// The current slot, relative to the start of the current epoch
     pub slot_index: u64,
@@ -38,7 +50,7 @@ pub struct EpochInfo {
     pub slots_in_epoch: u64,
 
     /// The absolute current slot
-    pub absolute_slot: u64,
+    pub absolute_slot: Slot,
 
     /// The current block height
     pub block_height: u64,
@@ -47,111 +59,108 @@ pub struct EpochInfo {
     pub transaction_count: Option<u64>,
 }
 
-#[rpc]
+#[rpc(client, server)]
+#[async_trait]
 pub trait Solana {
-    type Metadata;
-
-    #[rpc(meta, name = "getAccountInfo")]
-    fn get_account_info(
+    #[method(name = "getAccountInfo")]
+    async fn get_account_info(
         &self,
-        meta: Self::Metadata,
         pubkey_str: String,
-        config: Option<solana_rpc_client_api::config::RpcAccountInfoConfig>,
-    ) -> Result<RpcResponse<Option<UiAccount>>>;
+        config: Option<RpcAccountInfoConfig>,
+    ) -> RpcResult<RpcResponse<Option<UiAccount>>>;
 
-    #[rpc(meta, name = "getMultipleAccounts")]
-    fn get_multiple_accounts(
+    #[method(name = "getMultipleAccounts")]
+    async fn get_multiple_accounts(
         &self,
-        meta: Self::Metadata,
         pubkey_strs: Vec<String>,
         config: Option<RpcAccountInfoConfig>,
-    ) -> Result<RpcResponse<Vec<Option<UiAccount>>>>;
+    ) -> RpcResult<RpcResponse<Vec<Option<UiAccount>>>>;
 
-    #[rpc(meta, name = "getProgramAccounts")]
-    fn get_program_accounts(
+    #[method(name = "getProgramAccounts")]
+    async fn get_program_accounts(
         &self,
-        meta: Self::Metadata,
         program_id_str: String,
         config: Option<RpcProgramAccountsConfig>,
-    ) -> Result<OptionalContext<Vec<RpcKeyedAccount>>>;
+    ) -> RpcResult<OptionalContext<Vec<RpcKeyedAccount>>>;
 
-    #[rpc(meta, name = "getTokenAccountsByOwner")]
-    fn get_token_accounts_by_owner(
+    #[method(name = "getTokenAccountsByOwner")]
+    async fn get_token_accounts_by_owner(
         &self,
-        meta: Self::Metadata,
         owner_str: String,
         token_account_filter: RpcTokenAccountsFilter,
         config: Option<RpcAccountInfoConfig>,
-    ) -> Result<RpcResponse<Vec<RpcKeyedAccount>>>;
+    ) -> RpcResult<RpcResponse<Vec<RpcKeyedAccount>>>;
 
-    #[rpc(meta, name = "getLatestBlockhash")]
-    fn get_latest_blockhash(
+    #[method(name = "getLatestBlockhash")]
+    async fn get_latest_blockhash(
         &self,
-        meta: Self::Metadata,
         config: Option<RpcContextConfig>,
-    ) -> Result<RpcResponse<RpcBlockhash>>;
+    ) -> RpcResult<RpcResponse<RpcBlockhash>>;
 
-    #[rpc(meta, name = "sendTransaction")]
-    fn send_transaction(
+    #[method(name = "sendTransaction")]
+    async fn send_transaction(
         &self,
-        meta: Self::Metadata,
         data: String,
         config: Option<RpcSendTransactionConfig>,
-    ) -> Result<String>;
+    ) -> RpcResult<String>;
 
-    #[rpc(meta, name = "getInflationReward")]
-    fn get_inflation_reward(
+    #[method(name = "simulateTransaction")]
+    async fn simulate_transaction(
         &self,
-        meta: Self::Metadata,
+        data: String,
+        config: Option<RpcSimulateTransactionConfig>,
+    ) -> RpcResult<RpcResponse<RpcSimulateTransactionResult>>;
+
+    #[method(name = "getInflationReward")]
+    async fn get_inflation_reward(
+        &self,
         address_strs: Vec<String>,
         config: Option<RpcEpochConfig>,
-    ) -> BoxFuture<Result<Vec<Option<RpcInflationReward>>>>;
+    ) -> RpcResult<Vec<Option<RpcInflationReward>>>;
 
-    #[rpc(meta, name = "getFeeForMessage")]
-    fn get_fee_for_message(
+    #[method(name = "getFeeForMessage")]
+    async fn get_fee_for_message(
         &self,
-        meta: Self::Metadata,
         data: String,
         config: Option<RpcContextConfig>,
-    ) -> Result<RpcResponse<Option<u64>>>;
+    ) -> RpcResult<RpcResponse<Option<u64>>>;
 
-    #[rpc(meta, name = "getBalance")]
-    fn get_balance(
+    #[method(name = "getBalance")]
+    async fn get_balance(
         &self,
-        meta: Self::Metadata,
         pubkey_str: String,
         config: Option<RpcContextConfig>,
-    ) -> Result<RpcResponse<u64>>;
+    ) -> RpcResult<RpcResponse<u64>>;
 
-    #[rpc(meta, name = "getEpochInfo")]
-    fn get_epoch_info(
-        &self,
-        meta: Self::Metadata,
-        config: Option<RpcContextConfig>,
-    ) -> Result<EpochInfo>;
+    #[method(name = "getGenesisHash")]
+    async fn get_genesis_hash(&self) -> RpcResult<String>;
 
-    #[rpc(meta, name = "getGenesisHash")]
-    fn get_genesis_hash(&self, meta: Self::Metadata) -> Result<String>;
+    #[method(name = "getEpochInfo")]
+    async fn get_epoch_info(&self, config: Option<RpcContextConfig>) -> RpcResult<EpochInfo>;
 
-    #[rpc(meta, name = "getTransactionCount")]
-    fn get_transaction_count(
-        &self,
-        meta: Self::Metadata,
-        config: Option<RpcContextConfig>,
-    ) -> Result<u64>;
+    #[method(name = "getTransactionCount")]
+    async fn get_transaction_count(&self, config: Option<RpcContextConfig>) -> RpcResult<u64>;
 }
 
-pub struct SolanaImpl;
-impl Solana for SolanaImpl {
-    type Metadata = Client;
+#[derive(Clone)]
+pub struct Solana {
+    client: Client,
+}
 
-    fn get_account_info(
+impl Solana {
+    pub fn new(client: Client) -> Self {
+        Self { client }
+    }
+}
+
+#[async_trait]
+impl SolanaServer for Solana {
+    async fn get_account_info(
         &self,
-        _meta: Self::Metadata,
         pubkey_str: String,
         config: Option<RpcAccountInfoConfig>,
-    ) -> Result<RpcResponse<Option<UiAccount>>> {
-        tracing::debug!("get_account_info: {:?}, {:?}", pubkey_str, config);
+    ) -> RpcResult<RpcResponse<Option<UiAccount>>> {
+        tracing::info!("get_account_info: {:?}, config: {:?}", pubkey_str, config);
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -162,13 +171,12 @@ impl Solana for SolanaImpl {
         })
     }
 
-    fn get_multiple_accounts(
+    async fn get_multiple_accounts(
         &self,
-        _meta: Self::Metadata,
         pubkey_strs: Vec<String>,
         config: Option<RpcAccountInfoConfig>,
-    ) -> Result<RpcResponse<Vec<Option<UiAccount>>>> {
-        tracing::debug!("get_multiple_accounts: {:?}, {:?}", pubkey_strs, config);
+    ) -> RpcResult<RpcResponse<Vec<Option<UiAccount>>>> {
+        tracing::info!("get_multiple_accounts: {:?}, {:?}", pubkey_strs, config);
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -179,25 +187,23 @@ impl Solana for SolanaImpl {
         })
     }
 
-    fn get_program_accounts(
+    async fn get_program_accounts(
         &self,
-        _meta: Self::Metadata,
         program_id_str: String,
         config: Option<RpcProgramAccountsConfig>,
-    ) -> Result<OptionalContext<Vec<RpcKeyedAccount>>> {
-        tracing::debug!("get_program_accounts: {:?}, {:?}", program_id_str, config);
+    ) -> RpcResult<OptionalContext<Vec<RpcKeyedAccount>>> {
+        tracing::info!("get_program_accounts: {:?}. {:?}", program_id_str, config);
 
         Ok(OptionalContext::NoContext(Vec::default()))
     }
 
-    fn get_token_accounts_by_owner(
+    async fn get_token_accounts_by_owner(
         &self,
-        _meta: Self::Metadata,
         owner_str: String,
         token_account_filter: RpcTokenAccountsFilter,
         config: Option<RpcAccountInfoConfig>,
-    ) -> Result<RpcResponse<Vec<RpcKeyedAccount>>> {
-        tracing::debug!(
+    ) -> RpcResult<RpcResponse<Vec<RpcKeyedAccount>>> {
+        tracing::info!(
             "get_token_accounts_by_owner: {:?}, {:?}, {:?}",
             owner_str,
             token_account_filter,
@@ -213,12 +219,11 @@ impl Solana for SolanaImpl {
         })
     }
 
-    fn get_latest_blockhash(
+    async fn get_latest_blockhash(
         &self,
-        _meta: Self::Metadata,
         config: Option<RpcContextConfig>,
-    ) -> Result<RpcResponse<RpcBlockhash>> {
-        tracing::debug!("get_latest_blockhash: {:?}", config);
+    ) -> RpcResult<RpcResponse<RpcBlockhash>> {
+        tracing::info!("get_latest_blockhash: {:?}", config);
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -232,35 +237,56 @@ impl Solana for SolanaImpl {
         })
     }
 
-    fn send_transaction(
+    async fn send_transaction(
         &self,
-        _meta: Self::Metadata,
         data: String,
         config: Option<RpcSendTransactionConfig>,
-    ) -> Result<String> {
-        tracing::debug!("send_transaction: {:?}, {:?}", data, config);
+    ) -> RpcResult<String> {
+        tracing::info!("send_transaction: {:?}, {:?}", data, config);
 
         Ok(String::default())
     }
 
-    fn get_inflation_reward(
+    async fn simulate_transaction(
         &self,
-        _meta: Self::Metadata,
-        address_strs: Vec<String>,
-        config: Option<RpcEpochConfig>,
-    ) -> BoxFuture<Result<Vec<Option<RpcInflationReward>>>> {
-        tracing::debug!("get_inflation_reward: {:?}, {:?}", address_strs, config);
+        data: String,
+        config: Option<RpcSimulateTransactionConfig>,
+    ) -> RpcResult<RpcResponse<RpcSimulateTransactionResult>> {
+        tracing::info!("simulate_transaction: {:?}, {:?}", data, config);
 
-        Box::pin(async move { Ok(Vec::default()) })
+        Ok(RpcResponse {
+            context: RpcResponseContext {
+                slot: 0,
+                api_version: None,
+            },
+            value: RpcSimulateTransactionResult {
+                err: None,
+                logs: None,
+                accounts: None,
+                units_consumed: None,
+                return_data: None,
+                inner_instructions: None,
+                replacement_blockhash: None,
+            },
+        })
     }
 
-    fn get_fee_for_message(
+    async fn get_inflation_reward(
         &self,
-        _meta: Self::Metadata,
+        address_strs: Vec<String>,
+        config: Option<RpcEpochConfig>,
+    ) -> RpcResult<Vec<Option<RpcInflationReward>>> {
+        tracing::info!("get_inflation_reward: {:?}, {:?}", address_strs, config);
+
+        Ok(Vec::default())
+    }
+
+    async fn get_fee_for_message(
+        &self,
         data: String,
         config: Option<RpcContextConfig>,
-    ) -> Result<RpcResponse<Option<u64>>> {
-        tracing::debug!("get_fee_for_message: {:?}, {:?}", data, config);
+    ) -> RpcResult<RpcResponse<Option<u64>>> {
+        tracing::info!("get_fee_for_message: {:?}, {:?}", data, config);
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -271,13 +297,12 @@ impl Solana for SolanaImpl {
         })
     }
 
-    fn get_balance(
+    async fn get_balance(
         &self,
-        _meta: Self::Metadata,
         pubkey_str: String,
         config: Option<RpcContextConfig>,
-    ) -> Result<RpcResponse<u64>> {
-        tracing::debug!("get_balance: {:?}, {:?}", pubkey_str, config);
+    ) -> RpcResult<RpcResponse<u64>> {
+        tracing::info!("get_balance: {:?}, {:?}", pubkey_str, config);
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -288,12 +313,14 @@ impl Solana for SolanaImpl {
         })
     }
 
-    fn get_epoch_info(
-        &self,
-        _meta: Self::Metadata,
-        config: Option<RpcContextConfig>,
-    ) -> Result<EpochInfo> {
-        tracing::debug!("get_epoch_info: {:?}", config);
+    async fn get_genesis_hash(&self) -> RpcResult<String> {
+        tracing::info!("get_genesis_hash");
+
+        Ok(String::default())
+    }
+
+    async fn get_epoch_info(&self, config: Option<RpcContextConfig>) -> RpcResult<EpochInfo> {
+        tracing::info!("get_epoch_info: {:?}", config);
 
         Ok(EpochInfo {
             epoch: 0,
@@ -305,18 +332,8 @@ impl Solana for SolanaImpl {
         })
     }
 
-    fn get_genesis_hash(&self, _meta: Self::Metadata) -> Result<String> {
-        tracing::debug!("get_genesis_hash");
-
-        Ok(String::default())
-    }
-
-    fn get_transaction_count(
-        &self,
-        _meta: Self::Metadata,
-        config: Option<RpcContextConfig>,
-    ) -> Result<u64> {
-        tracing::debug!("get_transaction_count: {:?}", config);
+    async fn get_transaction_count(&self, config: Option<RpcContextConfig>) -> RpcResult<u64> {
+        tracing::info!("get_transaction_count: {:?}", config);
 
         Ok(0)
     }

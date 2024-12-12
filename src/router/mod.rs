@@ -15,17 +15,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{client::Client, rpc::handle_rpc_request};
+use crate::rpc::handle_rpc_request;
 use axum::{
     routing::{get, post},
     Router,
 };
-use jsonrpc_core::MetaIoHandler;
+use jsonrpsee::RpcModule;
 use std::sync::Arc;
 
-pub fn create_router(rpc_handler: Arc<MetaIoHandler<Client>>, client: Client) -> Router {
+pub fn create_router(module: Arc<RpcModule<()>>) -> Router {
     Router::new()
         .route("/health", get(|| async { "OK" }))
         .route("/jsonrpc", post(handle_rpc_request))
-        .with_state((rpc_handler, client))
+        .with_state(module)
 }
