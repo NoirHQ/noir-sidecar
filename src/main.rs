@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use noir_sidecar::{client::create_client, rpc::create_rpc_handler};
+use noir_sidecar::{client::create_client, rpc::create_rpc_module};
 use std::sync::Arc;
 
 #[tokio::main]
@@ -29,11 +29,14 @@ async fn main() -> anyhow::Result<()> {
 
     let client = create_client(&config.client)
         .await
+        .map(Arc::new)
         .expect("failed to create client.");
-    let rpc_handler = Arc::new(create_rpc_handler(client));
+    let module = create_rpc_module(client)
+        .map(Arc::new)
+        .expect("failed to create jsonrpc handler.");
 
     let server = noir_sidecar::server::SidecarServer::new(config.server);
-    server.run(rpc_handler).await?;
+    server.run(module).await?;
 
     Ok(())
 }

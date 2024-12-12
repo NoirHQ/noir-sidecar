@@ -20,7 +20,7 @@ use jsonrpsee::{
     ws_client::{WsClient, WsClientBuilder},
 };
 use serde::Deserialize;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClientConfig {
@@ -31,13 +31,8 @@ pub struct ClientConfig {
     max_response_size: Option<u32>,
 }
 
-#[derive(Debug, Clone)]
-pub struct Client {
-    pub client: Arc<WsClient>,
-}
-
-pub async fn create_client(config: &ClientConfig) -> Result<Client, ClientError> {
-    let client = WsClientBuilder::default()
+pub async fn create_client(config: &ClientConfig) -> Result<WsClient, ClientError> {
+    WsClientBuilder::default()
         .request_timeout(
             config
                 .request_timeout_seconds
@@ -54,9 +49,4 @@ pub async fn create_client(config: &ClientConfig) -> Result<Client, ClientError>
         .max_response_size(config.max_response_size.unwrap_or(20 * 1024 * 1024))
         .build(config.endpoint.clone())
         .await
-        .unwrap();
-
-    Ok(Client {
-        client: Arc::new(client),
-    })
 }

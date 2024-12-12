@@ -15,11 +15,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{client::Client, rpc::error};
+use crate::rpc::internal_error;
 use jsonrpsee::{
     core::{async_trait, client::ClientT, params::ArrayParams, RpcResult},
     proc_macros::rpc,
-    types::ErrorCode,
+    ws_client::WsClient,
 };
 use noir_core_primitives::{Hash, Header};
 use serde::{Deserialize, Serialize};
@@ -34,6 +34,7 @@ use solana_rpc_client_api::{
         RpcKeyedAccount, RpcResponseContext, RpcSimulateTransactionResult,
     },
 };
+use std::sync::Arc;
 
 pub type Slot = u64;
 
@@ -146,11 +147,11 @@ pub trait Solana {
 
 #[derive(Clone)]
 pub struct Solana {
-    client: Client,
+    client: Arc<WsClient>,
 }
 
 impl Solana {
-    pub fn new(client: Client) -> Self {
+    pub fn new(client: Arc<WsClient>) -> Self {
         Self { client }
     }
 }
@@ -227,29 +228,24 @@ impl SolanaServer for Solana {
     ) -> RpcResult<RpcResponse<RpcBlockhash>> {
         tracing::debug!("getLatestBlockhash: {:?}", config);
 
-        if !self.client.client.is_connected() {
-            return Err(error(
-                ErrorCode::InternalError,
-                Some("Client disconnected".to_string()),
-            ));
+        if !self.client.is_connected() {
+            return Err(internal_error(Some("Client disconnected".to_string())));
         }
 
         let hash: Hash = self
             .client
-            .client
             .request("chain_getFinalizedHead", ArrayParams::new())
             .await
-            .map_err(|e| error(ErrorCode::InternalError, Some(e.to_string())))?;
+            .map_err(|e| internal_error(Some(e.to_string())))?;
 
         let mut params = ArrayParams::new();
         params.insert(hash).unwrap();
 
         let Header { number, .. } = self
             .client
-            .client
             .request("chain_getHeader", params)
             .await
-            .map_err(|e| error(ErrorCode::InternalError, Some(e.to_string())))?;
+            .map_err(|e| internal_error(Some(e.to_string())))?;
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -342,11 +338,8 @@ impl SolanaServer for Solana {
     async fn get_genesis_hash(&self) -> RpcResult<String> {
         tracing::debug!("getGenesisHash");
 
-        if !self.client.client.is_connected() {
-            return Err(error(
-                ErrorCode::InternalError,
-                Some("Client disconnected".to_string()),
-            ));
+        if !self.client.is_connected() {
+            return Err(internal_error(Some("Client disconnected".to_string())));
         }
 
         let mut params = ArrayParams::new();
@@ -354,12 +347,11 @@ impl SolanaServer for Solana {
 
         let hash: Hash = self
             .client
-            .client
             .request("chain_getBlockHash", params)
             .await
-            .map_err(|e| error(ErrorCode::InternalError, Some(e.to_string())))?;
+            .map_err(|e| internal_error(Some(e.to_string())))?;
 
-        Ok(format!("{:x?}", hash))
+        Ok(bs58::encode(hash.as_bytes()).into_string())
     }
 
     async fn get_epoch_info(&self, config: Option<RpcContextConfig>) -> RpcResult<EpochInfo> {

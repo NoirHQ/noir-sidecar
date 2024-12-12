@@ -17,24 +17,22 @@
 
 pub mod solana;
 
-use crate::client::Client;
 use axum::{extract::State, http::StatusCode, Json};
 use jsonrpsee::{
     types::{ErrorCode, ErrorObject, ErrorObjectOwned},
+    ws_client::WsClient,
     RpcModule,
 };
 use serde_json::Value;
 use solana::{Solana, SolanaServer};
 use std::sync::Arc;
 
-pub fn create_rpc_handler(client: Client) -> RpcModule<()> {
+pub fn create_rpc_module(client: Arc<WsClient>) -> Result<RpcModule<()>, anyhow::Error> {
     let mut module = RpcModule::new(());
 
-    module
-        .merge(Solana::new(client.clone()).into_rpc())
-        .unwrap();
+    module.merge(Solana::new(client.clone()).into_rpc())?;
 
-    module
+    Ok(module)
 }
 
 pub async fn handle_rpc_request(
@@ -48,10 +46,7 @@ pub async fn handle_rpc_request(
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(
-                    serde_json::to_value(error(ErrorCode::InternalError, Some(e.to_string())))
-                        .unwrap(),
-                ),
+                Json(serde_json::to_value(internal_error(Some(e.to_string()))).unwrap()),
             )
         }
     };
@@ -64,4 +59,8 @@ pub async fn handle_rpc_request(
 
 pub fn error(error: ErrorCode, data: Option<String>) -> ErrorObjectOwned {
     ErrorObject::owned(error.code(), error.message(), data)
+}
+
+pub fn internal_error(data: Option<String>) -> ErrorObjectOwned {
+    error(ErrorCode::InternalError, data)
 }
