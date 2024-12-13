@@ -19,10 +19,13 @@ pub mod solana;
 
 use axum::{extract::State, http::StatusCode, Json};
 use jsonrpsee::{
+    core::{client::ClientT, ClientError},
+    rpc_params,
     types::{ErrorCode, ErrorObject, ErrorObjectOwned},
     ws_client::WsClient,
     RpcModule,
 };
+use parity_scale_codec::{Decode, Encode};
 use serde_json::Value;
 use solana::{Solana, SolanaServer};
 use std::sync::Arc;
@@ -63,4 +66,22 @@ pub fn error(error: ErrorCode, data: Option<String>) -> ErrorObjectOwned {
 
 pub fn internal_error(data: Option<String>) -> ErrorObjectOwned {
     error(ErrorCode::InternalError, data)
+}
+
+pub async fn state_call<I: Encode, O: Decode>(
+    client: &WsClient,
+    method: &str,
+    data: I,
+) -> Result<O, ClientError> {
+    if !client.is_connected() {
+        return Err(ClientError::Custom("Client disconnected".to_string()));
+    }
+
+    let args = format!("0x{}", hex::encode(data.encode()));
+    let res: String = client
+        .request("state_call", rpc_params!(method, args))
+        .await?;
+    let res = hex::decode(res).map_err(|e| ClientError::Custom(e.to_string()))?;
+
+    O::decode(&mut &res[..]).map_err(|e| ClientError::Custom(e.to_string()))
 }
