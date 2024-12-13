@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::rpc::internal_error;
+use crate::rpc::{internal_error, parse_error, state_call};
 use jsonrpsee::{
     core::{async_trait, client::ClientT, params::ArrayParams, RpcResult},
     proc_macros::rpc,
@@ -34,6 +34,7 @@ use solana_rpc_client_api::{
         RpcKeyedAccount, RpcResponseContext, RpcSimulateTransactionResult,
     },
 };
+use solana_runtime_api::error::Error;
 use std::sync::Arc;
 
 pub type Slot = u64;
@@ -165,13 +166,20 @@ impl SolanaServer for Solana {
     ) -> RpcResult<RpcResponse<Option<UiAccount>>> {
         tracing::debug!("getAccountInfo: {:?}, config: {:?}", pubkey_str, config);
 
-        Ok(RpcResponse {
-            context: RpcResponseContext {
-                slot: 0,
-                api_version: None,
-            },
-            value: None,
-        })
+        let method = "getAccountInfo".to_string();
+        let params = serde_json::to_vec(&(pubkey_str, config))
+            .map_err(|e| parse_error(Some(e.to_string())))?;
+
+        let response = state_call::<_, Result<Vec<u8>, Error>>(
+            &self.client,
+            "SolanaRuntimeApi_call",
+            (method, params),
+        )
+        .await
+        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
     }
 
     async fn get_multiple_accounts(

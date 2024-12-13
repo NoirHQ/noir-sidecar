@@ -3111,7 +3111,7 @@ checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 [[package]]
 name = "noir-core-primitives"
 version = "0.4.0"
-source = "git+https://github.com/NoirHQ/noir.git#d21eb5921d0995c3898b6a3378c37fd915c60cf4"
+source = "git+https://github.com/NoirHQ/noir?rev=05552701274f7b583d188ce93910e6094c07d472#05552701274f7b583d188ce93910e6094c07d472"
 dependencies = [
  "np-runtime",
  "sp-core",
@@ -3134,6 +3134,7 @@ dependencies = [
  "serde_json",
  "solana-account-decoder",
  "solana-rpc-client-api",
+ "solana-runtime-api",
  "tokio",
  "toml 0.8.19",
  "tower 0.5.2",
@@ -3145,7 +3146,7 @@ dependencies = [
 [[package]]
 name = "np-runtime"
 version = "0.4.0"
-source = "git+https://github.com/NoirHQ/noir.git#d21eb5921d0995c3898b6a3378c37fd915c60cf4"
+source = "git+https://github.com/NoirHQ/noir?rev=05552701274f7b583d188ce93910e6094c07d472#05552701274f7b583d188ce93910e6094c07d472"
 dependencies = [
  "buidl",
  "const-hex",
@@ -5148,6 +5149,16 @@ dependencies = [
  "solana-transaction-status-client-types",
  "solana-version",
  "thiserror",
+]
+
+[[package]]
+name = "solana-runtime-api"
+version = "0.4.0"
+source = "git+https://github.com/NoirHQ/noir?rev=05552701274f7b583d188ce93910e6094c07d472#05552701274f7b583d188ce93910e6094c07d472"
+dependencies = [
+ "parity-scale-codec",
+ "scale-info",
+ "sp-api",
 ]
 
 [[package]]

@@ -26,6 +26,7 @@ use jsonrpsee::{
     RpcModule,
 };
 use parity_scale_codec::{Decode, Encode};
+use serde::Serialize;
 use serde_json::Value;
 use solana::{Solana, SolanaServer};
 use std::sync::Arc;
@@ -60,12 +61,16 @@ pub async fn handle_rpc_request(
     )
 }
 
-pub fn error(error: ErrorCode, data: Option<String>) -> ErrorObjectOwned {
+pub fn error<S: Serialize>(error: ErrorCode, data: Option<S>) -> ErrorObjectOwned {
     ErrorObject::owned(error.code(), error.message(), data)
 }
 
-pub fn internal_error(data: Option<String>) -> ErrorObjectOwned {
+pub fn internal_error<S: Serialize>(data: Option<S>) -> ErrorObjectOwned {
     error(ErrorCode::InternalError, data)
+}
+
+pub fn parse_error<S: Serialize>(data: Option<S>) -> ErrorObjectOwned {
+    error(ErrorCode::ParseError, data)
 }
 
 pub async fn state_call<I: Encode, O: Decode>(
@@ -78,9 +83,12 @@ pub async fn state_call<I: Encode, O: Decode>(
     }
 
     let args = format!("0x{}", hex::encode(data.encode()));
-    let res: String = client
+    let mut res: String = client
         .request("state_call", rpc_params!(method, args))
         .await?;
+    if res.starts_with("0x") {
+        res = res.strip_prefix("0x").map(|s| s.to_string()).unwrap();
+    }
     let res = hex::decode(res).map_err(|e| ClientError::Custom(e.to_string()))?;
 
     O::decode(&mut &res[..]).map_err(|e| ClientError::Custom(e.to_string()))
