@@ -189,13 +189,20 @@ impl SolanaServer for Solana {
     ) -> RpcResult<RpcResponse<Vec<Option<UiAccount>>>> {
         tracing::debug!("getMultipleAccounts: {:?}, {:?}", pubkey_strs, config);
 
-        Ok(RpcResponse {
-            context: RpcResponseContext {
-                slot: 0,
-                api_version: None,
-            },
-            value: Vec::default(),
-        })
+        let method = "getMultipleAccounts".to_string();
+        let params = serde_json::to_vec(&(pubkey_strs, config))
+            .map_err(|e| parse_error(Some(e.to_string())))?;
+
+        let response = state_call::<_, Result<Vec<u8>, Error>>(
+            &self.client,
+            "SolanaRuntimeApi_call",
+            (method, params),
+        )
+        .await
+        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
     }
 
     async fn get_program_accounts(
@@ -205,7 +212,20 @@ impl SolanaServer for Solana {
     ) -> RpcResult<OptionalContext<Vec<RpcKeyedAccount>>> {
         tracing::debug!("getProgramAccounts: {:?}. {:?}", program_id_str, config);
 
-        Ok(OptionalContext::NoContext(Vec::default()))
+        let method = "getProgramAccounts".to_string();
+        let params = serde_json::to_vec(&(program_id_str, config))
+            .map_err(|e| parse_error(Some(e.to_string())))?;
+
+        let response = state_call::<_, Result<Vec<u8>, Error>>(
+            &self.client,
+            "SolanaRuntimeApi_call",
+            (method, params),
+        )
+        .await
+        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
     }
 
     async fn get_token_accounts_by_owner(
@@ -221,13 +241,20 @@ impl SolanaServer for Solana {
             config
         );
 
-        Ok(RpcResponse {
-            context: RpcResponseContext {
-                slot: 0,
-                api_version: None,
-            },
-            value: Vec::default(),
-        })
+        let method = "getTokenAccountsByOwner".to_string();
+        let params = serde_json::to_vec(&(owner_str, token_account_filter, config))
+            .map_err(|e| parse_error(Some(e.to_string())))?;
+
+        let response = state_call::<_, Result<Vec<u8>, Error>>(
+            &self.client,
+            "SolanaRuntimeApi_call",
+            (method, params),
+        )
+        .await
+        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
     }
 
     async fn get_latest_blockhash(
@@ -274,7 +301,20 @@ impl SolanaServer for Solana {
     ) -> RpcResult<String> {
         tracing::debug!("sendTransaction: {:?}, {:?}", data, config);
 
-        Ok(String::default())
+        let method = "sendTransaction".to_string();
+        let params =
+            serde_json::to_vec(&(data, config)).map_err(|e| parse_error(Some(e.to_string())))?;
+
+        let response = state_call::<_, Result<Vec<u8>, Error>>(
+            &self.client,
+            "SolanaRuntimeApi_call",
+            (method, params),
+        )
+        .await
+        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
     }
 
     async fn simulate_transaction(
@@ -284,21 +324,20 @@ impl SolanaServer for Solana {
     ) -> RpcResult<RpcResponse<RpcSimulateTransactionResult>> {
         tracing::debug!("simulateTransaction: {:?}, {:?}", data, config);
 
-        Ok(RpcResponse {
-            context: RpcResponseContext {
-                slot: 0,
-                api_version: None,
-            },
-            value: RpcSimulateTransactionResult {
-                err: None,
-                logs: None,
-                accounts: None,
-                units_consumed: None,
-                return_data: None,
-                inner_instructions: None,
-                replacement_blockhash: None,
-            },
-        })
+        let method = "simulateTransaction".to_string();
+        let params =
+            serde_json::to_vec(&(data, config)).map_err(|e| parse_error(Some(e.to_string())))?;
+
+        let response = state_call::<_, Result<Vec<u8>, Error>>(
+            &self.client,
+            "SolanaRuntimeApi_call",
+            (method, params),
+        )
+        .await
+        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
     }
 
     async fn get_inflation_reward(
@@ -308,7 +347,20 @@ impl SolanaServer for Solana {
     ) -> RpcResult<Vec<Option<RpcInflationReward>>> {
         tracing::debug!("getInflationReward: {:?}, {:?}", address_strs, config);
 
-        Ok(Vec::default())
+        let method = "getInflationReward".to_string();
+        let params = serde_json::to_vec(&(address_strs, config))
+            .map_err(|e| parse_error(Some(e.to_string())))?;
+
+        let response = state_call::<_, Result<Vec<u8>, Error>>(
+            &self.client,
+            "SolanaRuntimeApi_call",
+            (method, params),
+        )
+        .await
+        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
     }
 
     async fn get_fee_for_message(
@@ -318,13 +370,20 @@ impl SolanaServer for Solana {
     ) -> RpcResult<RpcResponse<Option<u64>>> {
         tracing::debug!("getFeeForMessage: {:?}, {:?}", data, config);
 
-        Ok(RpcResponse {
-            context: RpcResponseContext {
-                slot: 0,
-                api_version: None,
-            },
-            value: None,
-        })
+        let method = "getFeeForMessage".to_string();
+        let params =
+            serde_json::to_vec(&(data, config)).map_err(|e| parse_error(Some(e.to_string())))?;
+
+        let response = state_call::<_, Result<Vec<u8>, Error>>(
+            &self.client,
+            "SolanaRuntimeApi_call",
+            (method, params),
+        )
+        .await
+        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
     }
 
     async fn get_balance(
@@ -334,13 +393,20 @@ impl SolanaServer for Solana {
     ) -> RpcResult<RpcResponse<u64>> {
         tracing::debug!("getBalance: {:?}, {:?}", pubkey_str, config);
 
-        Ok(RpcResponse {
-            context: RpcResponseContext {
-                slot: 0,
-                api_version: None,
-            },
-            value: 0,
-        })
+        let method = "getBalance".to_string();
+        let params = serde_json::to_vec(&(pubkey_str, config))
+            .map_err(|e| parse_error(Some(e.to_string())))?;
+
+        let response = state_call::<_, Result<Vec<u8>, Error>>(
+            &self.client,
+            "SolanaRuntimeApi_call",
+            (method, params),
+        )
+        .await
+        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
     }
 
     async fn get_genesis_hash(&self) -> RpcResult<String> {
@@ -365,19 +431,36 @@ impl SolanaServer for Solana {
     async fn get_epoch_info(&self, config: Option<RpcContextConfig>) -> RpcResult<EpochInfo> {
         tracing::debug!("getEpochInfo: {:?}", config);
 
-        Ok(EpochInfo {
-            epoch: 0,
-            slot_index: 0,
-            slots_in_epoch: 0,
-            absolute_slot: 0,
-            block_height: 0,
-            transaction_count: Some(0),
-        })
+        let method = "getEpochInfo".to_string();
+        let params = serde_json::to_vec(&config).map_err(|e| parse_error(Some(e.to_string())))?;
+
+        let response = state_call::<_, Result<Vec<u8>, Error>>(
+            &self.client,
+            "SolanaRuntimeApi_call",
+            (method, params),
+        )
+        .await
+        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
     }
 
     async fn get_transaction_count(&self, config: Option<RpcContextConfig>) -> RpcResult<u64> {
         tracing::debug!("getTransactionCount: {:?}", config);
 
-        Ok(0)
+        let method = "getTransactionCount".to_string();
+        let params = serde_json::to_vec(&config).map_err(|e| parse_error(Some(e.to_string())))?;
+
+        let response = state_call::<_, Result<Vec<u8>, Error>>(
+            &self.client,
+            "SolanaRuntimeApi_call",
+            (method, params),
+        )
+        .await
+        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
     }
 }
