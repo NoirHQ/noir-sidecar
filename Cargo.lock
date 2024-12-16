@@ -3111,7 +3111,7 @@ checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 [[package]]
 name = "noir-core-primitives"
 version = "0.4.0"
-source = "git+https://github.com/NoirHQ/noir?rev=05552701274f7b583d188ce93910e6094c07d472#05552701274f7b583d188ce93910e6094c07d472"
+source = "git+https://github.com/NoirHQ/noir?rev=4c5ea4d68b0fe76af6a298ec63145b1b4d423cc1#4c5ea4d68b0fe76af6a298ec63145b1b4d423cc1"
 dependencies = [
  "np-runtime",
  "sp-core",
@@ -3135,6 +3135,7 @@ dependencies = [
  "solana-account-decoder",
  "solana-rpc-client-api",
  "solana-runtime-api",
+ "solana-sdk",
  "tokio",
  "toml 0.8.19",
  "tower 0.5.2",
@@ -3146,7 +3147,7 @@ dependencies = [
 [[package]]
 name = "np-runtime"
 version = "0.4.0"
-source = "git+https://github.com/NoirHQ/noir?rev=05552701274f7b583d188ce93910e6094c07d472#05552701274f7b583d188ce93910e6094c07d472"
+source = "git+https://github.com/NoirHQ/noir?rev=4c5ea4d68b0fe76af6a298ec63145b1b4d423cc1#4c5ea4d68b0fe76af6a298ec63145b1b4d423cc1"
 dependencies = [
  "buidl",
  "const-hex",
@@ -5154,7 +5155,7 @@ dependencies = [
 [[package]]
 name = "solana-runtime-api"
 version = "0.4.0"
-source = "git+https://github.com/NoirHQ/noir?rev=05552701274f7b583d188ce93910e6094c07d472#05552701274f7b583d188ce93910e6094c07d472"
+source = "git+https://github.com/NoirHQ/noir?rev=4c5ea4d68b0fe76af6a298ec63145b1b4d423cc1#4c5ea4d68b0fe76af6a298ec63145b1b4d423cc1"
 dependencies = [
  "parity-scale-codec",
  "scale-info",

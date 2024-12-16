@@ -23,7 +23,6 @@ use jsonrpsee::{
     ws_client::WsClient,
 };
 use noir_core_primitives::{Hash, Header};
-use serde::{Deserialize, Serialize};
 use solana_account_decoder::UiAccount;
 use solana_rpc_client_api::{
     config::{
@@ -36,33 +35,12 @@ use solana_rpc_client_api::{
     },
 };
 use solana_runtime_api::error::Error;
+use solana_sdk::{
+    clock::Slot,
+    commitment_config::{CommitmentConfig, CommitmentLevel},
+    epoch_info::EpochInfo,
+};
 use std::sync::Arc;
-
-pub type Slot = u64;
-
-pub type Epoch = u64;
-
-#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct EpochInfo {
-    /// The current epoch
-    pub epoch: Epoch,
-
-    /// The current slot, relative to the start of the current epoch
-    pub slot_index: u64,
-
-    /// The number of slots in this epoch
-    pub slots_in_epoch: u64,
-
-    /// The absolute current slot
-    pub absolute_slot: Slot,
-
-    /// The current block height
-    pub block_height: u64,
-
-    /// Total number of transactions processed without error since genesis
-    pub transaction_count: Option<u64>,
-}
 
 #[rpc(client, server)]
 #[async_trait]
@@ -264,15 +242,10 @@ impl SolanaServer for Solana {
     ) -> RpcResult<RpcResponse<RpcBlockhash>> {
         tracing::debug!("getLatestBlockhash: {:?}", config);
 
-        if !self.client.is_connected() {
-            return Err(internal_error(Some("Client disconnected".to_string())));
-        }
-
-        let hash: Hash = self
-            .client
-            .request("chain_getFinalizedHead", rpc_params!())
-            .await
-            .map_err(|e| internal_error(Some(e.to_string())))?;
+        let config = config.unwrap_or_default();
+        let hash = self
+            .get_hash_by_context(config.commitment, config.min_context_slot)
+            .await?;
 
         let Header { number, .. } = self
             .client
@@ -280,6 +253,7 @@ impl SolanaServer for Solana {
             .await
             .map_err(|e| internal_error(Some(e.to_string())))?;
 
+        // TODO: Complete rpc response context
         Ok(RpcResponse {
             context: RpcResponseContext {
                 slot: 0,
@@ -457,5 +431,38 @@ impl SolanaServer for Solana {
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
+    }
+}
+
+impl Solana {
+    async fn get_hash_by_context(
+        &self,
+        commitment: Option<CommitmentConfig>,
+        min_context_slot: Option<Slot>,
+    ) -> RpcResult<Hash> {
+        if let Some(_min_context_slot) = min_context_slot {
+            // TODO: Handle min_context_slot
+        }
+
+        if !self.client.is_connected() {
+            return Err(internal_error(Some("Client disconnected".to_string())));
+        }
+
+        let commitment = commitment.unwrap_or_default();
+        let hash: Hash = match commitment.commitment {
+            CommitmentLevel::Processed => {
+                self.client
+                    .request("chain_getBlockHash", rpc_params!())
+                    .await
+            }
+            CommitmentLevel::Confirmed | CommitmentLevel::Finalized => {
+                self.client
+                    .request("chain_getFinalizedHead", rpc_params!())
+                    .await
+            }
+        }
+        .map_err(|e| internal_error(Some(e.to_string())))?;
+
+        Ok(hash)
     }
 }
