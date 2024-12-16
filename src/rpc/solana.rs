@@ -17,8 +17,9 @@
 
 use crate::rpc::{internal_error, parse_error, state_call};
 use jsonrpsee::{
-    core::{async_trait, client::ClientT, params::ArrayParams, RpcResult},
+    core::{async_trait, client::ClientT, RpcResult},
     proc_macros::rpc,
+    rpc_params,
     ws_client::WsClient,
 };
 use noir_core_primitives::{Hash, Header};
@@ -269,16 +270,13 @@ impl SolanaServer for Solana {
 
         let hash: Hash = self
             .client
-            .request("chain_getFinalizedHead", ArrayParams::new())
+            .request("chain_getFinalizedHead", rpc_params!())
             .await
             .map_err(|e| internal_error(Some(e.to_string())))?;
 
-        let mut params = ArrayParams::new();
-        params.insert(hash).unwrap();
-
         let Header { number, .. } = self
             .client
-            .request("chain_getHeader", params)
+            .request("chain_getHeader", rpc_params!(hash))
             .await
             .map_err(|e| internal_error(Some(e.to_string())))?;
 
@@ -416,12 +414,9 @@ impl SolanaServer for Solana {
             return Err(internal_error(Some("Client disconnected".to_string())));
         }
 
-        let mut params = ArrayParams::new();
-        params.insert(0).unwrap();
-
         let hash: Hash = self
             .client
-            .request("chain_getBlockHash", params)
+            .request("chain_getBlockHash", rpc_params!(0))
             .await
             .map_err(|e| internal_error(Some(e.to_string())))?;
 
