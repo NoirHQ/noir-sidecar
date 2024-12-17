@@ -24,8 +24,8 @@ hex = "0.4.3"
 jsonrpsee = { version = "0.24.7", features = ["full"] }
 noir-core-primitives = { git = "https://github.com/NoirHQ/noir", rev = "4c5ea4d68b0fe76af6a298ec63145b1b4d423cc1" }
 parity-scale-codec = { version = "3.6.12", features = ["derive"] }
-serde = { version = "1.0.216", features = ["derive"] }
-serde_json = "1.0.133"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 solana-account-decoder = "2.1.5"
 solana-rpc-client-api = "2.1.5"
 solana-runtime-api = { git = "https://github.com/NoirHQ/noir", rev = "4c5ea4d68b0fe76af6a298ec63145b1b4d423cc1" }

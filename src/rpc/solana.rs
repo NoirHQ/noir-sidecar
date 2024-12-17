@@ -23,7 +23,7 @@ use jsonrpsee::{
     ws_client::WsClient,
 };
 use noir_core_primitives::{Hash, Header};
-use solana_account_decoder::UiAccount;
+use solana_account_decoder::{encode_ui_account, UiAccount, UiAccountEncoding};
 use solana_rpc_client_api::{
     config::{
         RpcAccountInfoConfig, RpcContextConfig, RpcEpochConfig, RpcProgramAccountsConfig,
@@ -36,11 +36,13 @@ use solana_rpc_client_api::{
 };
 use solana_runtime_api::error::Error;
 use solana_sdk::{
+    account::Account,
     clock::Slot,
     commitment_config::{CommitmentConfig, CommitmentLevel},
     epoch_info::EpochInfo,
+    pubkey::Pubkey,
 };
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 #[rpc(client, server)]
 #[async_trait]
@@ -145,20 +147,40 @@ impl SolanaServer for Solana {
     ) -> RpcResult<RpcResponse<Option<UiAccount>>> {
         tracing::debug!("get_account_info rpc request received: {:?}", pubkey_str);
 
+        let config = config.unwrap_or_default();
+        let hash = self
+            .get_hash_by_context(config.commitment, config.min_context_slot)
+            .await?;
+        let pubkey = Pubkey::from_str(&pubkey_str).map_err(|e| parse_error(Some(e.to_string())))?;
+
         let method = "getAccountInfo".to_string();
-        let params = serde_json::to_vec(&(pubkey_str, config))
-            .map_err(|e| parse_error(Some(e.to_string())))?;
+        let params = serde_json::to_vec(&pubkey).map_err(|e| parse_error(Some(e.to_string())))?;
 
         let response = state_call::<_, Result<Vec<u8>, Error>>(
             &self.client,
             "SolanaRuntimeApi_call",
             (method, params),
+            Some(hash),
         )
         .await
         .map_err(|e| internal_error(Some(e.to_string())))?
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
+        let account = serde_json::from_slice::<Option<Account>>(&response)
+            .map_err(|e| internal_error(Some(e.to_string())))?;
+        let encoding = config.encoding.unwrap_or(UiAccountEncoding::Binary);
+        let data_slice_config = config.data_slice;
+
+        let ui_account = account
+            .map(|account| encode_ui_account(&pubkey, &account, encoding, None, data_slice_config));
+
+        Ok(RpcResponse {
+            context: RpcResponseContext {
+                slot: 0,
+                api_version: None,
+            },
+            value: ui_account,
+        })
     }
 
     async fn get_multiple_accounts(
@@ -171,20 +193,58 @@ impl SolanaServer for Solana {
             pubkey_strs.len()
         );
 
-        let method = "getMultipleAccounts".to_string();
-        let params = serde_json::to_vec(&(pubkey_strs, config))
+        let config = config.unwrap_or_default();
+        let hash = self
+            .get_hash_by_context(config.commitment, config.min_context_slot)
+            .await?;
+        let pubkeys = pubkey_strs
+            .iter()
+            .map(|pubkey| Pubkey::from_str(pubkey))
+            .collect::<Result<Vec<Pubkey>, _>>()
             .map_err(|e| parse_error(Some(e.to_string())))?;
+
+        let method = "getMultipleAccounts".to_string();
+        let params = serde_json::to_vec(&pubkeys).map_err(|e| parse_error(Some(e.to_string())))?;
 
         let response = state_call::<_, Result<Vec<u8>, Error>>(
             &self.client,
             "SolanaRuntimeApi_call",
             (method, params),
+            Some(hash),
         )
         .await
         .map_err(|e| internal_error(Some(e.to_string())))?
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
+        let encoding = config.encoding.unwrap_or(UiAccountEncoding::Binary);
+        let data_slice_config = config.data_slice;
+
+        let accounts = serde_json::from_slice::<Vec<Option<Account>>>(&response)
+            .map_err(|e| internal_error(Some(e.to_string())))?;
+
+        if pubkey_strs.len() != accounts.len() {
+            return Err(internal_error(Some(
+                "Account count mismatch with public keys.".to_string(),
+            )));
+        }
+
+        let ui_accounts = pubkeys
+            .into_iter()
+            .zip(accounts)
+            .map(|(pubkey, account)| {
+                account.map(|account| {
+                    encode_ui_account(&pubkey, &account, encoding, None, data_slice_config)
+                })
+            })
+            .collect::<Vec<Option<UiAccount>>>();
+
+        Ok(RpcResponse {
+            context: RpcResponseContext {
+                slot: 0,
+                api_version: None,
+            },
+            value: ui_accounts,
+        })
     }
 
     async fn get_program_accounts(
@@ -205,6 +265,7 @@ impl SolanaServer for Solana {
             &self.client,
             "SolanaRuntimeApi_call",
             (method, params),
+            None,
         )
         .await
         .map_err(|e| internal_error(Some(e.to_string())))?
@@ -232,6 +293,7 @@ impl SolanaServer for Solana {
             &self.client,
             "SolanaRuntimeApi_call",
             (method, params),
+            None,
         )
         .await
         .map_err(|e| internal_error(Some(e.to_string())))?
@@ -285,6 +347,7 @@ impl SolanaServer for Solana {
             &self.client,
             "SolanaRuntimeApi_call",
             (method, params),
+            None,
         )
         .await
         .map_err(|e| internal_error(Some(e.to_string())))?
@@ -308,6 +371,7 @@ impl SolanaServer for Solana {
             &self.client,
             "SolanaRuntimeApi_call",
             (method, params),
+            None,
         )
         .await
         .map_err(|e| internal_error(Some(e.to_string())))?
@@ -334,6 +398,7 @@ impl SolanaServer for Solana {
             &self.client,
             "SolanaRuntimeApi_call",
             (method, params),
+            None,
         )
         .await
         .map_err(|e| internal_error(Some(e.to_string())))?
@@ -357,6 +422,7 @@ impl SolanaServer for Solana {
             &self.client,
             "SolanaRuntimeApi_call",
             (method, params),
+            None,
         )
         .await
         .map_err(|e| internal_error(Some(e.to_string())))?
@@ -372,20 +438,35 @@ impl SolanaServer for Solana {
     ) -> RpcResult<RpcResponse<u64>> {
         tracing::debug!("get_balance rpc request received: {:?}", pubkey_str);
 
+        let config = config.unwrap_or_default();
+        let pubkey = Pubkey::from_str(&pubkey_str).map_err(|e| parse_error(Some(e.to_string())))?;
+        let hash = self
+            .get_hash_by_context(config.commitment, config.min_context_slot)
+            .await?;
+
         let method = "getBalance".to_string();
-        let params = serde_json::to_vec(&(pubkey_str, config))
-            .map_err(|e| parse_error(Some(e.to_string())))?;
+        let params = serde_json::to_vec(&pubkey).map_err(|e| parse_error(Some(e.to_string())))?;
 
         let response = state_call::<_, Result<Vec<u8>, Error>>(
             &self.client,
             "SolanaRuntimeApi_call",
             (method, params),
+            Some(hash),
         )
         .await
         .map_err(|e| internal_error(Some(e.to_string())))?
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
+        let balance = serde_json::from_slice::<u64>(&response)
+            .map_err(|e| internal_error(Some(e.to_string())))?;
+
+        Ok(RpcResponse {
+            context: RpcResponseContext {
+                slot: 0,
+                api_version: None,
+            },
+            value: balance,
+        })
     }
 
     async fn get_genesis_hash(&self) -> RpcResult<String> {
@@ -414,6 +495,7 @@ impl SolanaServer for Solana {
             &self.client,
             "SolanaRuntimeApi_call",
             (method, params),
+            None,
         )
         .await
         .map_err(|e| internal_error(Some(e.to_string())))?
@@ -432,6 +514,7 @@ impl SolanaServer for Solana {
             &self.client,
             "SolanaRuntimeApi_call",
             (method, params),
+            None,
         )
         .await
         .map_err(|e| internal_error(Some(e.to_string())))?

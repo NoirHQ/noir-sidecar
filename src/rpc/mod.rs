@@ -25,6 +25,7 @@ use jsonrpsee::{
     ws_client::WsClient,
     RpcModule,
 };
+use noir_core_primitives::Hash;
 use parity_scale_codec::{Decode, Encode};
 use serde::Serialize;
 use serde_json::Value;
@@ -77,6 +78,7 @@ pub async fn state_call<I: Encode, O: Decode>(
     client: &WsClient,
     method: &str,
     data: I,
+    hash: Option<Hash>,
 ) -> Result<O, ClientError> {
     if !client.is_connected() {
         return Err(ClientError::Custom("Client disconnected".to_string()));
@@ -84,7 +86,7 @@ pub async fn state_call<I: Encode, O: Decode>(
 
     let args = format!("0x{}", hex::encode(data.encode()));
     let mut res: String = client
-        .request("state_call", rpc_params!(method, args))
+        .request("state_call", rpc_params!(method, args, hash))
         .await?;
     if res.starts_with("0x") {
         res = res.strip_prefix("0x").map(|s| s.to_string()).unwrap();
