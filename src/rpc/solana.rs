@@ -143,7 +143,7 @@ impl SolanaServer for Solana {
         pubkey_str: String,
         config: Option<RpcAccountInfoConfig>,
     ) -> RpcResult<RpcResponse<Option<UiAccount>>> {
-        tracing::debug!("getAccountInfo: {:?}, config: {:?}", pubkey_str, config);
+        tracing::debug!("get_account_info rpc request received: {:?}", pubkey_str);
 
         let method = "getAccountInfo".to_string();
         let params = serde_json::to_vec(&(pubkey_str, config))
@@ -166,7 +166,10 @@ impl SolanaServer for Solana {
         pubkey_strs: Vec<String>,
         config: Option<RpcAccountInfoConfig>,
     ) -> RpcResult<RpcResponse<Vec<Option<UiAccount>>>> {
-        tracing::debug!("getMultipleAccounts: {:?}, {:?}", pubkey_strs, config);
+        tracing::debug!(
+            "get_multiple_accounts rpc request received: {:?}",
+            pubkey_strs.len()
+        );
 
         let method = "getMultipleAccounts".to_string();
         let params = serde_json::to_vec(&(pubkey_strs, config))
@@ -189,7 +192,10 @@ impl SolanaServer for Solana {
         program_id_str: String,
         config: Option<RpcProgramAccountsConfig>,
     ) -> RpcResult<OptionalContext<Vec<RpcKeyedAccount>>> {
-        tracing::debug!("getProgramAccounts: {:?}. {:?}", program_id_str, config);
+        tracing::debug!(
+            "get_program_accounts rpc request received: {:?}",
+            program_id_str
+        );
 
         let method = "getProgramAccounts".to_string();
         let params = serde_json::to_vec(&(program_id_str, config))
@@ -214,10 +220,8 @@ impl SolanaServer for Solana {
         config: Option<RpcAccountInfoConfig>,
     ) -> RpcResult<RpcResponse<Vec<RpcKeyedAccount>>> {
         tracing::debug!(
-            "getTokenAccountsByOwner: {:?}, {:?}, {:?}",
-            owner_str,
-            token_account_filter,
-            config
+            "get_token_accounts_by_owner rpc request received: {:?}",
+            owner_str
         );
 
         let method = "getTokenAccountsByOwner".to_string();
@@ -240,7 +244,7 @@ impl SolanaServer for Solana {
         &self,
         config: Option<RpcContextConfig>,
     ) -> RpcResult<RpcResponse<RpcBlockhash>> {
-        tracing::debug!("getLatestBlockhash: {:?}", config);
+        tracing::debug!("get_latest_blockhash rpc request received");
 
         let config = config.unwrap_or_default();
         let hash = self
@@ -271,7 +275,7 @@ impl SolanaServer for Solana {
         data: String,
         config: Option<RpcSendTransactionConfig>,
     ) -> RpcResult<String> {
-        tracing::debug!("sendTransaction: {:?}, {:?}", data, config);
+        tracing::debug!("send_transaction rpc request received");
 
         let method = "sendTransaction".to_string();
         let params =
@@ -294,7 +298,7 @@ impl SolanaServer for Solana {
         data: String,
         config: Option<RpcSimulateTransactionConfig>,
     ) -> RpcResult<RpcResponse<RpcSimulateTransactionResult>> {
-        tracing::debug!("simulateTransaction: {:?}, {:?}", data, config);
+        tracing::debug!("simulate_transaction rpc request received");
 
         let method = "simulateTransaction".to_string();
         let params =
@@ -317,7 +321,10 @@ impl SolanaServer for Solana {
         address_strs: Vec<String>,
         config: Option<RpcEpochConfig>,
     ) -> RpcResult<Vec<Option<RpcInflationReward>>> {
-        tracing::debug!("getInflationReward: {:?}, {:?}", address_strs, config);
+        tracing::debug!(
+            "get_inflation_reward rpc request received: {:?}",
+            address_strs.len()
+        );
 
         let method = "getInflationReward".to_string();
         let params = serde_json::to_vec(&(address_strs, config))
@@ -340,7 +347,7 @@ impl SolanaServer for Solana {
         data: String,
         config: Option<RpcContextConfig>,
     ) -> RpcResult<RpcResponse<Option<u64>>> {
-        tracing::debug!("getFeeForMessage: {:?}, {:?}", data, config);
+        tracing::debug!("get_fee_for_message rpc request received");
 
         let method = "getFeeForMessage".to_string();
         let params =
@@ -363,7 +370,7 @@ impl SolanaServer for Solana {
         pubkey_str: String,
         config: Option<RpcContextConfig>,
     ) -> RpcResult<RpcResponse<u64>> {
-        tracing::debug!("getBalance: {:?}, {:?}", pubkey_str, config);
+        tracing::debug!("get_balance rpc request received: {:?}", pubkey_str);
 
         let method = "getBalance".to_string();
         let params = serde_json::to_vec(&(pubkey_str, config))
@@ -382,7 +389,7 @@ impl SolanaServer for Solana {
     }
 
     async fn get_genesis_hash(&self) -> RpcResult<String> {
-        tracing::debug!("getGenesisHash");
+        tracing::debug!("get_genesis_hash rpc request received");
 
         if !self.client.is_connected() {
             return Err(internal_error(Some("Client disconnected".to_string())));
@@ -398,7 +405,7 @@ impl SolanaServer for Solana {
     }
 
     async fn get_epoch_info(&self, config: Option<RpcContextConfig>) -> RpcResult<EpochInfo> {
-        tracing::debug!("getEpochInfo: {:?}", config);
+        tracing::debug!("get_epoch_info rpc request received");
 
         let method = "getEpochInfo".to_string();
         let params = serde_json::to_vec(&config).map_err(|e| parse_error(Some(e.to_string())))?;
@@ -416,7 +423,7 @@ impl SolanaServer for Solana {
     }
 
     async fn get_transaction_count(&self, config: Option<RpcContextConfig>) -> RpcResult<u64> {
-        tracing::debug!("getTransactionCount: {:?}", config);
+        tracing::debug!("get_transaction_count rpc request received");
 
         let method = "getTransactionCount".to_string();
         let params = serde_json::to_vec(&config).map_err(|e| parse_error(Some(e.to_string())))?;
