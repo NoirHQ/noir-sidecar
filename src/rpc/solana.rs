@@ -29,6 +29,7 @@ use solana_rpc_client_api::{
         RpcAccountInfoConfig, RpcContextConfig, RpcEpochConfig, RpcProgramAccountsConfig,
         RpcSendTransactionConfig, RpcSimulateTransactionConfig, RpcTokenAccountsFilter,
     },
+    filter::RpcFilterType,
     response::{
         OptionalContext, Response as RpcResponse, RpcBlockhash, RpcInflationReward,
         RpcKeyedAccount, RpcResponseContext, RpcSimulateTransactionResult,
@@ -257,21 +258,75 @@ impl SolanaServer for Solana {
             program_id_str
         );
 
+        // TODO: Handle sort_results
+        let (config, mut filters, with_context, _sort_results) = if let Some(config) = config {
+            (
+                Some(config.account_config),
+                config.filters.unwrap_or_default(),
+                config.with_context.unwrap_or_default(),
+                config.sort_results.unwrap_or(true),
+            )
+        } else {
+            (None, vec![], false, true)
+        };
+
+        let RpcAccountInfoConfig {
+            encoding,
+            data_slice: data_slice_config,
+            commitment,
+            min_context_slot,
+        } = config.unwrap_or_default();
+        let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
+        optimize_filters(&mut filters);
+
+        let hash = self
+            .get_hash_by_context(commitment, min_context_slot)
+            .await?;
+        let pubkey =
+            Pubkey::from_str(&program_id_str).map_err(|e| parse_error(Some(e.to_string())))?;
+
+        let accounts = get_program_accounts_by_id(&pubkey);
+
         let method = "getProgramAccounts".to_string();
-        let params = serde_json::to_vec(&(program_id_str, config))
+        let params = serde_json::to_vec(&(pubkey, accounts, filters))
             .map_err(|e| parse_error(Some(e.to_string())))?;
 
         let response = state_call::<_, Result<Vec<u8>, Error>>(
             &self.client,
             "SolanaRuntimeApi_call",
             (method, params),
-            None,
+            Some(hash),
         )
         .await
         .map_err(|e| internal_error(Some(e.to_string())))?
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
+        let keyed_accounts: Vec<RpcKeyedAccount> =
+            serde_json::from_slice::<Vec<(Pubkey, Account)>>(&response)
+                .map_err(|e| internal_error(Some(e.to_string())))?
+                .into_iter()
+                .map(|(pubkey, account)| RpcKeyedAccount {
+                    pubkey: pubkey.to_string(),
+                    account: encode_ui_account(
+                        &pubkey,
+                        &account,
+                        encoding,
+                        None,
+                        data_slice_config,
+                    ),
+                })
+                .collect();
+
+        Ok(match with_context {
+            true => OptionalContext::Context(RpcResponse {
+                context: RpcResponseContext {
+                    slot: 0,
+                    api_version: None,
+                },
+                value: keyed_accounts,
+            }),
+            false => OptionalContext::NoContext(keyed_accounts),
+        })
     }
 
     async fn get_token_accounts_by_owner(
@@ -555,4 +610,20 @@ impl Solana {
 
         Ok(hash)
     }
+}
+
+fn optimize_filters(filters: &mut [RpcFilterType]) {
+    filters.iter_mut().for_each(|filter_type| {
+        if let RpcFilterType::Memcmp(compare) = filter_type {
+            if let Err(err) = compare.convert_to_raw_bytes() {
+                // All filters should have been previously verified
+                tracing::warn!("Invalid filter: bytes could not be decoded, {err}");
+            }
+        }
+    })
+}
+
+fn get_program_accounts_by_id(_program_id: &Pubkey) -> Vec<Pubkey> {
+    // TODO: Get accounts owned by program
+    Vec::new()
 }
