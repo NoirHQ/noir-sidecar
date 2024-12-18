@@ -438,28 +438,17 @@ impl SolanaServer for Solana {
     async fn get_inflation_reward(
         &self,
         address_strs: Vec<String>,
-        config: Option<RpcEpochConfig>,
+        _config: Option<RpcEpochConfig>,
     ) -> RpcResult<Vec<Option<RpcInflationReward>>> {
         tracing::debug!(
             "get_inflation_reward rpc request received: {:?}",
             address_strs.len()
         );
 
-        let method = "getInflationReward".to_string();
-        let params = serde_json::to_vec(&(address_strs, config))
-            .map_err(|e| parse_error(Some(e.to_string())))?;
-
-        let response = state_call::<_, Result<Vec<u8>, Error>>(
-            &self.client,
-            "SolanaRuntimeApi_call",
-            (method, params),
-            None,
-        )
-        .await
-        .map_err(|e| internal_error(Some(e.to_string())))?
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
+        Ok(address_strs
+            .into_iter()
+            .map(|_| None)
+            .collect::<Vec<Option<RpcInflationReward>>>())
     }
 
     async fn get_fee_for_message(
