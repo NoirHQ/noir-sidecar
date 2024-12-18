@@ -562,14 +562,19 @@ impl SolanaServer for Solana {
     async fn get_transaction_count(&self, config: Option<RpcContextConfig>) -> RpcResult<u64> {
         tracing::debug!("get_transaction_count rpc request received");
 
+        let config = config.unwrap_or_default();
+        let hash = self
+            .get_hash_by_context(config.commitment, config.min_context_slot)
+            .await?;
+
         let method = "getTransactionCount".to_string();
-        let params = serde_json::to_vec(&config).map_err(|e| parse_error(Some(e.to_string())))?;
+        let params = serde_json::to_vec("").map_err(|e| parse_error(Some(e.to_string())))?;
 
         let response = state_call::<_, Result<Vec<u8>, Error>>(
             &self.client,
             "SolanaRuntimeApi_call",
             (method, params),
-            None,
+            Some(hash),
         )
         .await
         .map_err(|e| internal_error(Some(e.to_string())))?
