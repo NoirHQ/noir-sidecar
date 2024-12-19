@@ -74,6 +74,10 @@ pub fn parse_error<S: Serialize>(data: Option<S>) -> ErrorObjectOwned {
     error(ErrorCode::ParseError, data)
 }
 
+pub fn invalid_params<S: Serialize>(data: Option<S>) -> ErrorObjectOwned {
+    error(ErrorCode::InvalidParams, data)
+}
+
 pub async fn state_call<I: Encode, O: Decode>(
     client: &WsClient,
     method: &str,
