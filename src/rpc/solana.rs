@@ -36,7 +36,7 @@ use solana_rpc_client_api::{
         RpcSendTransactionConfig, RpcSimulateTransactionConfig, RpcTokenAccountsFilter,
     },
     filter::{Memcmp, RpcFilterType},
-    request::{TokenAccountsFilter, MAX_GET_PROGRAM_ACCOUNT_FILTERS},
+    request::{TokenAccountsFilter, MAX_GET_PROGRAM_ACCOUNT_FILTERS, MAX_MULTIPLE_ACCOUNTS},
     response::{
         OptionalContext, Response as RpcResponse, RpcBlockhash, RpcInflationReward,
         RpcKeyedAccount, RpcResponseContext, RpcSimulateTransactionResult,
@@ -45,7 +45,7 @@ use solana_rpc_client_api::{
 use solana_runtime_api::error::Error;
 use solana_sdk::{
     account::{Account, ReadableAccount},
-    clock::Slot,
+    clock::{Slot, UnixTimestamp},
     commitment_config::{CommitmentConfig, CommitmentLevel},
     epoch_info::EpochInfo,
     pubkey::Pubkey,
@@ -56,7 +56,7 @@ use spl_token_2022::{
     },
     state::Mint,
 };
-use std::{cmp::min, str::FromStr, sync::Arc};
+use std::{cmp::min, collections::HashMap, str::FromStr, sync::Arc};
 
 use super::invalid_request;
 
@@ -197,6 +197,17 @@ impl SolanaServer for Solana {
             pubkey_strs.len()
         );
 
+        if pubkey_strs.len() > MAX_MULTIPLE_ACCOUNTS {
+            return Err(invalid_params(Some(format!(
+                "Too many inputs provided; max {MAX_MULTIPLE_ACCOUNTS}"
+            ))));
+        }
+        let pubkeys = pubkey_strs
+            .iter()
+            .map(|pubkey| verify_pubkey(pubkey))
+            .collect::<Result<Vec<Pubkey>, _>>()
+            .map_err(|e| invalid_params(Some(e.to_string())))?;
+
         let RpcAccountInfoConfig {
             encoding,
             data_slice: data_slice_config,
@@ -206,52 +217,18 @@ impl SolanaServer for Solana {
         let hash = self
             .get_hash_by_context(commitment, min_context_slot)
             .await?;
-        let pubkeys = pubkey_strs
-            .iter()
-            .map(|pubkey| verify_pubkey(pubkey))
-            .collect::<Result<Vec<Pubkey>, _>>()
-            .map_err(|e| invalid_params(Some(e.to_string())))?;
-
-        let method = "getMultipleAccounts".to_string();
-        let params = serde_json::to_vec(&pubkeys).map_err(|e| parse_error(Some(e.to_string())))?;
-
-        let response = state_call::<_, Result<Vec<u8>, Error>>(
-            &self.client,
-            "SolanaRuntimeApi_call",
-            (method, params),
-            Some(hash),
-        )
-        .await
-        .map_err(|e| internal_error(Some(e.to_string())))?
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
 
-        let accounts = serde_json::from_slice::<Vec<Option<Account>>>(&response)
-            .map_err(|e| internal_error(Some(e.to_string())))?;
-
-        if pubkey_strs.len() != accounts.len() {
-            return Err(internal_error(Some(
-                "Account count mismatch with public keys.".to_string(),
-            )));
-        }
-
-        let ui_accounts = pubkeys
-            .into_iter()
-            .zip(accounts)
-            .map(|(pubkey, account)| {
-                account.map(|account| {
-                    encode_ui_account(&pubkey, &account, encoding, None, data_slice_config)
-                })
-            })
-            .collect::<Vec<Option<UiAccount>>>();
+        let response = self
+            .get_multiple_encoded_accounts(&pubkeys, encoding, data_slice_config, hash)
+            .await?;
 
         Ok(RpcResponse {
             context: RpcResponseContext {
                 slot: 0,
                 api_version: None,
             },
-            value: ui_accounts,
+            value: response,
         })
     }
 
@@ -730,31 +707,10 @@ impl Solana {
                 .ok_or(invalid_params(Some(
                     "Invalid param: could not find mint".to_string(),
                 )))?;
-            let mint_data = self
-                .get_additional_mint_data(mint_account.data(), hash)
-                .await?;
+            let timestamp = self.get_timestamp(hash).await?;
+            let mint_data = get_additional_mint_data(mint_account.data(), timestamp)?;
             Ok((*mint_account.owner(), mint_data))
         }
-    }
-
-    async fn get_additional_mint_data(
-        &self,
-        data: &[u8],
-        hash: Hash,
-    ) -> RpcResult<SplTokenAdditionalData> {
-        let timestamp = self.get_timestamp(hash).await?;
-        StateWithExtensions::<Mint>::unpack(data)
-            .map_err(|e| invalid_params(Some(e.to_string())))
-            .map(|mint| {
-                let interest_bearing_config = mint
-                    .get_extension::<InterestBearingConfig>()
-                    .map(|x| (*x, timestamp))
-                    .ok();
-                SplTokenAdditionalData {
-                    decimals: mint.base.decimals,
-                    interest_bearing_config,
-                }
-            })
     }
 
     fn get_program_accounts_by_id(&self, _program_id: &Pubkey) -> Vec<Pubkey> {
@@ -784,6 +740,33 @@ impl Solana {
         }
     }
 
+    pub async fn get_multiple_encoded_accounts(
+        &self,
+        pubkeys: &Vec<Pubkey>,
+        encoding: UiAccountEncoding,
+        data_slice: Option<UiDataSliceConfig>,
+        hash: Hash,
+    ) -> RpcResult<Vec<Option<UiAccount>>> {
+        let accounts = self.get_accounts(pubkeys, hash).await?;
+        let spl_token_ids = filter_known_spl_token_id(pubkeys.clone());
+
+        if encoding == UiAccountEncoding::JsonParsed && !spl_token_ids.is_empty() {
+            self.get_multiple_parsed_token_accounts(accounts, spl_token_ids, hash)
+                .await
+        } else {
+            let ui_accounts = accounts
+                .into_iter()
+                .map(|(pubkey, account)| match account {
+                    Some(account) => Some(encode_ui_account(
+                        &pubkey, &account, encoding, None, data_slice,
+                    )),
+                    None => None,
+                })
+                .collect::<Vec<Option<UiAccount>>>();
+            Ok(ui_accounts)
+        }
+    }
+
     pub async fn get_parsed_token_account(
         &self,
         pubkey: &Pubkey,
@@ -793,9 +776,8 @@ impl Solana {
         let additional_data = if let Some(mint_pubkey) = get_token_account_mint(account.data()) {
             match self.get_account(&mint_pubkey, hash).await? {
                 Some(mint_account) => {
-                    let data = self
-                        .get_additional_mint_data(mint_account.data(), hash)
-                        .await?;
+                    let timestamp = self.get_timestamp(hash).await?;
+                    let data = get_additional_mint_data(mint_account.data(), timestamp)?;
                     Some(AccountAdditionalDataV2 {
                         spl_token_additional_data: Some(data),
                     })
@@ -813,6 +795,53 @@ impl Solana {
             additional_data,
             None,
         ))
+    }
+
+    pub async fn get_multiple_parsed_token_accounts(
+        &self,
+        accounts: Vec<(Pubkey, Option<Account>)>,
+        spl_token_ids: Vec<Pubkey>,
+        hash: Hash,
+    ) -> RpcResult<Vec<Option<UiAccount>>> {
+        let mint_pubkeys = get_multiple_token_account_mint(&accounts, &spl_token_ids);
+        let mint_accounts: HashMap<Pubkey, Account> = self
+            .get_accounts(
+                &mint_pubkeys.values().cloned().collect::<Vec<Pubkey>>(),
+                hash,
+            )
+            .await?
+            .into_iter()
+            .filter_map(|(mint_pubkey, mint_account)| {
+                mint_account.map(|account| (mint_pubkey, account))
+            })
+            .collect();
+
+        let timestamp = self.get_timestamp(hash).await?;
+        let account_additional_data = get_multiple_additional_mint_data(&mint_accounts, timestamp);
+
+        let ui_accounts = accounts
+            .into_iter()
+            .map(|(pubkey, account)| match account {
+                Some(account) => {
+                    let additional_data = mint_pubkeys
+                        .get(&pubkey)
+                        .map(|mint_pubkey| account_additional_data.get(mint_pubkey))
+                        .flatten()
+                        .cloned();
+
+                    Some(encode_ui_account(
+                        &pubkey,
+                        &account,
+                        UiAccountEncoding::JsonParsed,
+                        additional_data,
+                        None,
+                    ))
+                }
+                None => None,
+            })
+            .collect();
+
+        Ok(ui_accounts)
     }
 
     pub async fn get_account(&self, pubkey: &Pubkey, hash: Hash) -> RpcResult<Option<Account>> {
@@ -833,7 +862,37 @@ impl Solana {
             .map_err(|e| internal_error(Some(e.to_string())))
     }
 
-    pub async fn get_timestamp(&self, hash: Hash) -> RpcResult<i64> {
+    pub async fn get_accounts(
+        &self,
+        pubkeys: &Vec<Pubkey>,
+        hash: Hash,
+    ) -> RpcResult<Vec<(Pubkey, Option<Account>)>> {
+        let method = "getMultipleAccounts".to_string();
+        let params = serde_json::to_vec(pubkeys).map_err(|e| parse_error(Some(e.to_string())))?;
+
+        let response = state_call::<_, Result<Vec<u8>, Error>>(
+            &self.client,
+            "SolanaRuntimeApi_call",
+            (method, params),
+            Some(hash),
+        )
+        .await
+        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+        let accounts = serde_json::from_slice::<Vec<Option<Account>>>(&response)
+            .map_err(|e| internal_error(Some(e.to_string())))?;
+
+        if pubkeys.len() != accounts.len() {
+            return Err(internal_error(Some(
+                "Account count mismatch with public keys.".to_string(),
+            )));
+        }
+
+        Ok(pubkeys.iter().cloned().zip(accounts).collect())
+    }
+
+    pub async fn get_timestamp(&self, hash: Hash) -> RpcResult<UnixTimestamp> {
         let timestamp_key = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
 
         if !self.client.is_connected() {
@@ -911,4 +970,69 @@ fn encode_account<T: ReadableAccount>(
             pubkey, account, encoding, None, data_slice,
         ))
     }
+}
+
+fn get_additional_mint_data(
+    data: &[u8],
+    timestamp: UnixTimestamp,
+) -> RpcResult<SplTokenAdditionalData> {
+    StateWithExtensions::<Mint>::unpack(data)
+        .map_err(|e| invalid_params(Some(e.to_string())))
+        .map(|mint| {
+            let interest_bearing_config = mint
+                .get_extension::<InterestBearingConfig>()
+                .map(|x| (*x, timestamp))
+                .ok();
+            SplTokenAdditionalData {
+                decimals: mint.base.decimals,
+                interest_bearing_config,
+            }
+        })
+}
+
+fn get_multiple_additional_mint_data(
+    accounts: &HashMap<Pubkey, Account>,
+    timestamp: UnixTimestamp,
+) -> HashMap<Pubkey, AccountAdditionalDataV2> {
+    accounts
+        .iter()
+        .filter_map(|(pubkey, account)| {
+            get_additional_mint_data(&account.data, timestamp)
+                .ok()
+                .map(|additional_data| {
+                    (
+                        pubkey.clone(),
+                        AccountAdditionalDataV2 {
+                            spl_token_additional_data: Some(additional_data),
+                        },
+                    )
+                })
+        })
+        .collect()
+}
+
+pub fn filter_known_spl_token_id(program_ids: Vec<Pubkey>) -> Vec<Pubkey> {
+    program_ids
+        .into_iter()
+        .filter(|program_id| is_known_spl_token_id(program_id))
+        .collect()
+}
+
+pub fn get_multiple_token_account_mint(
+    accounts: &[(Pubkey, Option<Account>)],
+    spl_token_ids: &[Pubkey],
+) -> HashMap<Pubkey, Pubkey> {
+    accounts
+        .iter()
+        .filter_map(|(pubkey, account)| {
+            account.as_ref().and_then(|acc| {
+                if spl_token_ids.contains(pubkey) {
+                    get_token_account_mint(&acc.data)
+                        .map(|mint_pubkey| (pubkey.clone(), mint_pubkey))
+                } else {
+                    None
+                }
+            })
+        })
+        .collect()
 }
