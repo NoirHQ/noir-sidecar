@@ -223,7 +223,7 @@ impl SolanaServer for Solana {
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
 
         let response = self
-            .get_multiple_encoded_accounts(&pubkeys, encoding, data_slice_config, hash)
+            .get_encoded_accounts(&pubkeys, encoding, data_slice_config, hash)
             .await?;
 
         Ok(RpcResponse {
@@ -341,19 +341,19 @@ impl SolanaServer for Solana {
             owner_str
         );
 
+        let owner = verify_pubkey(&owner_str)?;
+        let token_account_filter = verify_token_account_filter(token_account_filter)?;
+
         let RpcAccountInfoConfig {
             encoding,
             data_slice: data_slice_config,
             commitment,
             min_context_slot,
         } = config.unwrap_or_default();
-        let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
         let hash = self
             .get_hash_by_context(commitment, min_context_slot)
             .await?;
-
-        let owner = verify_pubkey(&owner_str)?;
-        let token_account_filter = verify_token_account_filter(token_account_filter)?;
+        let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
         let (token_program_id, mint) = self
             .get_token_program_id_and_mint(token_account_filter, hash)
             .await?;
@@ -367,49 +367,36 @@ impl SolanaServer for Solana {
             )));
         }
 
-        filters.push(RpcFilterType::TokenAccountState);
-        filters.push(RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
-            SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
-            owner.to_bytes().into(),
-        )));
-
-        let method = "getProgramAccounts".to_string();
-        let accounts = self.get_program_accounts_by_id(&token_program_id);
-        let params = serde_json::to_vec(&(token_program_id, accounts, filters))
-            .map_err(|e| parse_error(Some(e.to_string())))?;
-
-        let response = state_call::<_, Result<Vec<u8>, Error>>(
-            &self.client,
-            "SolanaRuntimeApi_call",
-            (method, params),
-            Some(hash),
-        )
-        .await
-        .map_err(|e| internal_error(Some(e.to_string())))?
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        let keyed_accounts: Vec<RpcKeyedAccount> =
-            serde_json::from_slice::<Vec<(Pubkey, Account)>>(&response)
-                .map_err(|e| internal_error(Some(e.to_string())))?
+        let keyed_accounts = self
+            .get_filtered_spl_token_accounts_by_owner(
+                &token_program_id,
+                &owner,
+                filters,
+                true,
+                hash,
+            )
+            .await?;
+        let accounts = if encoding == UiAccountEncoding::JsonParsed {
+            self.get_parsed_token_accounts(&keyed_accounts, hash)
+                .await?
+        } else {
+            keyed_accounts
                 .into_iter()
-                .map(|(pubkey, account)| RpcKeyedAccount {
-                    pubkey: pubkey.to_string(),
-                    account: encode_ui_account(
-                        &pubkey,
-                        &account,
-                        encoding,
-                        None,
-                        data_slice_config,
-                    ),
+                .map(|(pubkey, account)| {
+                    Ok(RpcKeyedAccount {
+                        pubkey: pubkey.to_string(),
+                        account: encode_account(&account, &pubkey, encoding, data_slice_config)?,
+                    })
                 })
-                .collect();
+                .collect::<RpcResult<Vec<_>>>()?
+        };
 
         Ok(RpcResponse {
             context: RpcResponseContext {
                 slot: 0,
                 api_version: None,
             },
-            value: keyed_accounts,
+            value: accounts,
         })
     }
 
@@ -751,7 +738,7 @@ impl Solana {
         }
     }
 
-    pub async fn get_multiple_encoded_accounts(
+    pub async fn get_encoded_accounts(
         &self,
         pubkeys: &Vec<Pubkey>,
         encoding: UiAccountEncoding,
