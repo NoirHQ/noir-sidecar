@@ -24,8 +24,10 @@ use jsonrpsee::{
 };
 use noir_core_primitives::{Hash, Header};
 use solana_account_decoder::{
-    encode_ui_account, parse_account_data::SplTokenAdditionalData,
-    parse_token::is_known_spl_token_id, UiAccount, UiAccountEncoding,
+    encode_ui_account,
+    parse_account_data::{AccountAdditionalDataV2, SplTokenAdditionalData},
+    parse_token::{get_token_account_mint, is_known_spl_token_id},
+    UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
 };
 use solana_inline_spl::token::SPL_TOKEN_ACCOUNT_OWNER_OFFSET;
 use solana_rpc_client_api::{
@@ -54,7 +56,9 @@ use spl_token_2022::{
     },
     state::Mint,
 };
-use std::{str::FromStr, sync::Arc};
+use std::{cmp::min, str::FromStr, sync::Arc};
+
+use super::invalid_request;
 
 #[rpc(client, server)]
 #[async_trait]
@@ -159,6 +163,7 @@ impl SolanaServer for Solana {
     ) -> RpcResult<RpcResponse<Option<UiAccount>>> {
         tracing::debug!("get_account_info rpc request received: {:?}", pubkey_str);
 
+        let pubkey = verify_pubkey(&pubkey_str)?;
         let RpcAccountInfoConfig {
             encoding,
             data_slice: data_slice_config,
@@ -168,19 +173,17 @@ impl SolanaServer for Solana {
         let hash = self
             .get_hash_by_context(commitment, min_context_slot)
             .await?;
-        let pubkey = verify_pubkey(&pubkey_str)?;
-
-        let account = self.get_account(&pubkey, hash).await?;
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
-        let ui_account = account
-            .map(|account| encode_ui_account(&pubkey, &account, encoding, None, data_slice_config));
 
+        let response = self
+            .get_encoded_account(&pubkey, encoding, data_slice_config, hash)
+            .await?;
         Ok(RpcResponse {
             context: RpcResponseContext {
                 slot: 0,
                 api_version: None,
             },
-            value: ui_account,
+            value: response,
         })
     }
 
@@ -759,6 +762,59 @@ impl Solana {
         Vec::new()
     }
 
+    pub async fn get_encoded_account(
+        &self,
+        pubkey: &Pubkey,
+        encoding: UiAccountEncoding,
+        data_slice: Option<UiDataSliceConfig>,
+        hash: Hash,
+    ) -> RpcResult<Option<UiAccount>> {
+        match self.get_account(pubkey, hash).await? {
+            Some(account) => {
+                let response = if is_known_spl_token_id(account.owner())
+                    && encoding == UiAccountEncoding::JsonParsed
+                {
+                    self.get_parsed_token_account(pubkey, account, hash).await?
+                } else {
+                    encode_account(&account, pubkey, encoding, data_slice)?
+                };
+                Ok(Some(response))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub async fn get_parsed_token_account(
+        &self,
+        pubkey: &Pubkey,
+        account: Account,
+        hash: Hash,
+    ) -> RpcResult<UiAccount> {
+        let additional_data = if let Some(mint_pubkey) = get_token_account_mint(account.data()) {
+            match self.get_account(&mint_pubkey, hash).await? {
+                Some(mint_account) => {
+                    let data = self
+                        .get_additional_mint_data(mint_account.data(), hash)
+                        .await?;
+                    Some(AccountAdditionalDataV2 {
+                        spl_token_additional_data: Some(data),
+                    })
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+
+        Ok(encode_ui_account(
+            pubkey,
+            &account,
+            UiAccountEncoding::JsonParsed,
+            additional_data,
+            None,
+        ))
+    }
+
     pub async fn get_account(&self, pubkey: &Pubkey, hash: Hash) -> RpcResult<Option<Account>> {
         let method = "getAccountInfo".to_string();
         let params = serde_json::to_vec(pubkey).map_err(|e| parse_error(Some(e.to_string())))?;
@@ -833,5 +889,26 @@ fn verify_token_account_filter(
             let program_id = verify_pubkey(&program_id_str)?;
             Ok(TokenAccountsFilter::ProgramId(program_id))
         }
+    }
+}
+
+fn encode_account<T: ReadableAccount>(
+    account: &T,
+    pubkey: &Pubkey,
+    encoding: UiAccountEncoding,
+    data_slice: Option<UiDataSliceConfig>,
+) -> RpcResult<UiAccount> {
+    if (encoding == UiAccountEncoding::Binary || encoding == UiAccountEncoding::Base58)
+        && data_slice
+            .map(|s| min(s.length, account.data().len().saturating_sub(s.offset)))
+            .unwrap_or(account.data().len())
+            > MAX_BASE58_BYTES
+    {
+        let message = format!("Encoded binary (base 58) data should be less than {MAX_BASE58_BYTES} bytes, please use Base64 encoding.");
+        Err(invalid_request(Some(message)))
+    } else {
+        Ok(encode_ui_account(
+            pubkey, account, encoding, None, data_slice,
+        ))
     }
 }

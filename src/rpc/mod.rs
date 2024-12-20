@@ -78,6 +78,10 @@ pub fn invalid_params<S: Serialize>(data: Option<S>) -> ErrorObjectOwned {
     error(ErrorCode::InvalidParams, data)
 }
 
+pub fn invalid_request<S: Serialize>(data: Option<S>) -> ErrorObjectOwned {
+    error(ErrorCode::InvalidRequest, data)
+}
+
 pub async fn state_call<I: Encode, O: Decode>(
     client: &WsClient,
     method: &str,
