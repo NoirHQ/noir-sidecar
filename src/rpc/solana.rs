@@ -15,6 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(clippy::type_complexity)]
 use super::invalid_request;
 use crate::rpc::{internal_error, invalid_params, parse_error, state_call};
 use jsonrpsee::{
@@ -305,7 +306,7 @@ impl SolanaServer for Solana {
         let accounts = if is_known_spl_token_id(&program_id)
             && encoding == UiAccountEncoding::JsonParsed
         {
-            self.get_parsed_token_accounts(&keyed_accounts, hash)
+            self.get_parsed_token_keyed_accounts(&keyed_accounts, hash)
                 .await?
         } else {
             keyed_accounts
@@ -377,7 +378,7 @@ impl SolanaServer for Solana {
             )
             .await?;
         let accounts = if encoding == UiAccountEncoding::JsonParsed {
-            self.get_parsed_token_accounts(&keyed_accounts, hash)
+            self.get_parsed_token_keyed_accounts(&keyed_accounts, hash)
                 .await?
         } else {
             keyed_accounts
@@ -746,11 +747,33 @@ impl Solana {
         hash: Hash,
     ) -> RpcResult<Vec<Option<UiAccount>>> {
         let accounts = self.get_accounts(pubkeys, hash).await?;
-        let spl_tokens = filter_known_spl_token_id(accounts.clone());
 
-        if encoding == UiAccountEncoding::JsonParsed && !spl_tokens.is_empty() {
-            self.get_multiple_parsed_token_accounts(accounts, spl_tokens, hash)
-                .await
+        if encoding == UiAccountEncoding::JsonParsed {
+            let (spl_tokens, non_spl_tokens) = filter_known_spl_tokens(accounts.clone());
+
+            let spl_token_ui_accounts = self.get_parsed_token_accounts(&spl_tokens, hash).await?;
+            let non_spl_token_ui_accounts = non_spl_tokens
+                .into_iter()
+                .map(|(pubkey, account)| match account {
+                    Some(account) => (
+                        pubkey,
+                        Some(encode_ui_account(
+                            &pubkey, &account, encoding, None, data_slice,
+                        )),
+                    ),
+                    None => (pubkey, None),
+                })
+                .collect::<HashMap<Pubkey, Option<UiAccount>>>();
+
+            Ok(pubkeys
+                .iter()
+                .map(|pubkey| {
+                    spl_token_ui_accounts
+                        .get(pubkey)
+                        .cloned()
+                        .or_else(|| non_spl_token_ui_accounts.get(pubkey).cloned().flatten())
+                })
+                .collect())
         } else {
             let ui_accounts = accounts
                 .into_iter()
@@ -792,52 +815,6 @@ impl Solana {
             additional_data,
             None,
         ))
-    }
-
-    pub async fn get_multiple_parsed_token_accounts(
-        &self,
-        accounts: Vec<(Pubkey, Option<Account>)>,
-        spl_tokens: Vec<(Pubkey, Account)>,
-        hash: Hash,
-    ) -> RpcResult<Vec<Option<UiAccount>>> {
-        let mint_pubkeys = get_multiple_token_account_mint(&spl_tokens);
-        let mint_accounts: HashMap<Pubkey, Account> = self
-            .get_accounts(
-                &mint_pubkeys.values().cloned().collect::<Vec<Pubkey>>(),
-                hash,
-            )
-            .await?
-            .into_iter()
-            .filter_map(|(mint_pubkey, mint_account)| {
-                mint_account.map(|account| (mint_pubkey, account))
-            })
-            .collect();
-
-        let timestamp = self.get_timestamp(hash).await?;
-        let account_additional_data = get_multiple_additional_mint_data(&mint_accounts, timestamp);
-
-        let ui_accounts = accounts
-            .into_iter()
-            .map(|(pubkey, account)| match account {
-                Some(account) => {
-                    let additional_data = mint_pubkeys
-                        .get(&pubkey)
-                        .and_then(|mint_pubkey| account_additional_data.get(mint_pubkey))
-                        .cloned();
-
-                    Some(encode_ui_account(
-                        &pubkey,
-                        &account,
-                        UiAccountEncoding::JsonParsed,
-                        additional_data,
-                        None,
-                    ))
-                }
-                None => None,
-            })
-            .collect();
-
-        Ok(ui_accounts)
     }
 
     pub async fn get_account(&self, pubkey: &Pubkey, hash: Hash) -> RpcResult<Option<Account>> {
@@ -996,7 +973,7 @@ impl Solana {
         &self,
         keyed_accounts: &[(Pubkey, Account)],
         hash: Hash,
-    ) -> RpcResult<Vec<RpcKeyedAccount>> {
+    ) -> RpcResult<HashMap<Pubkey, UiAccount>> {
         let mint_pubkeys = get_multiple_token_account_mint(keyed_accounts);
         let mint_accounts: HashMap<Pubkey, Account> = self
             .get_accounts(
@@ -1021,7 +998,7 @@ impl Solana {
                     .cloned();
 
                 (
-                    pubkey,
+                    *pubkey,
                     encode_ui_account(
                         pubkey,
                         account,
@@ -1031,6 +1008,18 @@ impl Solana {
                     ),
                 )
             })
+            .collect())
+    }
+
+    pub async fn get_parsed_token_keyed_accounts(
+        &self,
+        keyed_accounts: &[(Pubkey, Account)],
+        hash: Hash,
+    ) -> RpcResult<Vec<RpcKeyedAccount>> {
+        Ok(self
+            .get_parsed_token_accounts(keyed_accounts, hash)
+            .await?
+            .into_iter()
             .filter_map(
                 |(pubkey, maybe_encoded_account)| match maybe_encoded_account.data {
                     UiAccountData::Json(_) => Some(RpcKeyedAccount {
@@ -1140,14 +1129,22 @@ fn get_multiple_additional_mint_data(
         .collect()
 }
 
-pub fn filter_known_spl_token_id(
+pub fn filter_known_spl_tokens(
     accounts: Vec<(Pubkey, Option<Account>)>,
-) -> Vec<(Pubkey, Account)> {
-    accounts
+) -> (Vec<(Pubkey, Account)>, Vec<(Pubkey, Option<Account>)>) {
+    let (spl_tokens, non_spl_tokens): (
+        Vec<(Pubkey, Option<Account>)>,
+        Vec<(Pubkey, Option<Account>)>,
+    ) = accounts
         .into_iter()
-        .filter_map(|(pubkey, account)| account.map(|account| (pubkey, account)))
-        .filter(|(program_id, _)| is_known_spl_token_id(program_id))
-        .collect()
+        .partition(|(pubkey, account)| is_known_spl_token_id(pubkey) && account.is_some());
+    (
+        spl_tokens
+            .into_iter()
+            .filter_map(|(pubkey, account)| account.map(|account| (pubkey, account)))
+            .collect(),
+        non_spl_tokens,
+    )
 }
 
 pub fn get_multiple_token_account_mint(accounts: &[(Pubkey, Account)]) -> HashMap<Pubkey, Pubkey> {
