@@ -18,6 +18,8 @@
 #![allow(clippy::type_complexity)]
 use super::invalid_request;
 use crate::rpc::{internal_error, invalid_params, parse_error, state_call};
+use base64::{prelude::BASE64_STANDARD, Engine};
+use bincode::Options;
 use jsonrpsee::{
     core::{async_trait, client::ClientT, RpcResult},
     proc_macros::rpc,
@@ -53,16 +55,19 @@ use solana_sdk::{
     clock::{Slot, UnixTimestamp},
     commitment_config::{CommitmentConfig, CommitmentLevel},
     epoch_info::EpochInfo,
+    packet::PACKET_DATA_SIZE,
     program_pack::Pack,
     pubkey::{Pubkey, PUBKEY_BYTES},
+    transaction::VersionedTransaction,
 };
+use solana_transaction_status::{TransactionBinaryEncoding, UiTransactionEncoding};
 use spl_token_2022::{
     extension::{
         interest_bearing_mint::InterestBearingConfig, BaseStateWithExtensions, StateWithExtensions,
     },
     state::{Account as TokenAccount, Mint},
 };
-use std::{cmp::min, collections::HashMap, str::FromStr, sync::Arc};
+use std::{any::type_name, cmp::min, collections::HashMap, str::FromStr, sync::Arc};
 
 #[rpc(client, server)]
 #[async_trait]
@@ -441,21 +446,27 @@ impl SolanaServer for Solana {
     ) -> RpcResult<String> {
         tracing::debug!("send_transaction rpc request received");
 
-        let method = "sendTransaction".to_string();
-        let params =
-            serde_json::to_vec(&(data, config)).map_err(|e| parse_error(Some(e.to_string())))?;
+        let RpcSendTransactionConfig {
+            skip_preflight: _skip_preflight,
+            preflight_commitment: _preflight_commitment,
+            encoding,
+            max_retries: _max_retries,
+            min_context_slot: _min_context_slot,
+        } = config.unwrap_or_default();
+        let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base58);
+        let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
+            invalid_params(Some(format!(
+                "unsupported encoding: {tx_encoding}. Supported encodings: base58, base64"
+            )))
+        })?;
 
-        let response = state_call::<_, Result<Vec<u8>, Error>>(
-            &self.client,
-            "SolanaRuntimeApi_call",
-            (method, params),
-            None,
-        )
-        .await
-        .map_err(|e| internal_error(Some(e.to_string())))?
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+        let (_wire_transaction, unsanitized_tx) =
+            decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
 
-        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
+        let converted_tx = self.convert_transaction(&unsanitized_tx).await?;
+        let _hash = self.submit_transaction(converted_tx).await?;
+
+        Ok(unsanitized_tx.signatures[0].to_string())
     }
 
     async fn simulate_transaction(
@@ -869,7 +880,7 @@ impl Solana {
         let timestamp_key = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
 
         if !self.client.is_connected() {
-            return Err(internal_error(Some("Client disconnected")));
+            return Err(internal_error(Some("Client disconnected".to_string())));
         }
 
         let mut response: String = self
@@ -877,7 +888,7 @@ impl Solana {
             .request::<Option<String>, _>("state_getStorage", rpc_params!(timestamp_key, hash))
             .await
             .map_err(|e| internal_error(Some(e.to_string())))?
-            .ok_or(internal_error(Some("Timestamp not exist")))?;
+            .ok_or(internal_error(Some("Timestamp not exist".to_string())))?;
 
         if response.starts_with("0x") {
             response = response.strip_prefix("0x").map(|s| s.to_string()).unwrap();
@@ -1030,6 +1041,33 @@ impl Solana {
                 },
             )
             .collect())
+    }
+
+    async fn convert_transaction(
+        &self,
+        unsanitized_tx: &VersionedTransaction,
+    ) -> RpcResult<Vec<u8>> {
+        let method = "convertTransaction".to_string();
+        let params =
+            serde_json::to_vec(unsanitized_tx).map_err(|e| parse_error(Some(e.to_string())))?;
+
+        state_call::<_, Result<Vec<u8>, Error>>(
+            &self.client,
+            "SolanaRuntimeApi_call",
+            (method, params),
+            None,
+        )
+        .await
+        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))
+    }
+
+    async fn submit_transaction(&self, converted_tx: Vec<u8>) -> RpcResult<Hash> {
+        let transaction = format!("0x{}", hex::encode(converted_tx));
+        self.client
+            .request("author_submitExtrinsic", rpc_params!(transaction))
+            .await
+            .map_err(|e| invalid_request(Some(e.to_string())))
     }
 }
 
@@ -1256,4 +1294,68 @@ fn get_spl_token_mint_filter(program_id: &Pubkey, filters: &[RpcFilterType]) -> 
         tracing::debug!("spl_token program filters do not match by-mint index requisites");
         None
     }
+}
+
+const MAX_BASE58_SIZE: usize = 1683; // Golden, bump if PACKET_DATA_SIZE changes
+const MAX_BASE64_SIZE: usize = 1644; // Golden, bump if PACKET_DATA_SIZE changes
+fn decode_and_deserialize<T>(
+    encoded: String,
+    encoding: TransactionBinaryEncoding,
+) -> RpcResult<(Vec<u8>, T)>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let wire_output = match encoding {
+        TransactionBinaryEncoding::Base58 => {
+            // inc_new_counter_info!("rpc-base58_encoded_tx", 1);
+            if encoded.len() > MAX_BASE58_SIZE {
+                return Err(invalid_params(Some(format!(
+                    "base58 encoded {} too large: {} bytes (max: encoded/raw {}/{})",
+                    type_name::<T>(),
+                    encoded.len(),
+                    MAX_BASE58_SIZE,
+                    PACKET_DATA_SIZE,
+                ))));
+            }
+            bs58::decode(encoded)
+                .into_vec()
+                .map_err(|e| invalid_params(Some(format!("invalid base58 encoding: {e:?}"))))?
+        }
+        TransactionBinaryEncoding::Base64 => {
+            // inc_new_counter_info!("rpc-base64_encoded_tx", 1);
+            if encoded.len() > MAX_BASE64_SIZE {
+                return Err(invalid_params(Some(format!(
+                    "base64 encoded {} too large: {} bytes (max: encoded/raw {}/{})",
+                    type_name::<T>(),
+                    encoded.len(),
+                    MAX_BASE64_SIZE,
+                    PACKET_DATA_SIZE,
+                ))));
+            }
+            BASE64_STANDARD
+                .decode(encoded)
+                .map_err(|e| invalid_params(Some(format!("invalid base64 encoding: {e:?}"))))?
+        }
+    };
+    if wire_output.len() > PACKET_DATA_SIZE {
+        return Err(invalid_params(Some(format!(
+            "decoded {} too large: {} bytes (max: {} bytes)",
+            type_name::<T>(),
+            wire_output.len(),
+            PACKET_DATA_SIZE
+        ))));
+    }
+    bincode::options()
+        .with_limit(PACKET_DATA_SIZE as u64)
+        .with_fixint_encoding()
+        .allow_trailing_bytes()
+        .deserialize_from(&wire_output[..])
+        .map_err(|err| {
+            invalid_params(Some(format!(
+                "failed to deserialize {}: {}",
+                type_name::<T>(),
+                &err.to_string()
+            )))
+        })
+        .map(|output| (wire_output, output))
 }

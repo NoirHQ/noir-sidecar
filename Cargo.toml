@@ -18,6 +18,8 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 axum = "0.7.9"
+base64 = "0.22.1"
+bincode = "1.3.3"
 bs58 = "0.5.1"
 clap = { version = "4.5.23", features = ["derive"] }
 hex = "0.4.3"
@@ -31,6 +33,7 @@ solana-inline-spl = "2.1.6"
 solana-rpc-client-api = "2.1.5"
 solana-runtime-api = { git = "https://github.com/NoirHQ/noir", rev = "4c5ea4d68b0fe76af6a298ec63145b1b4d423cc1" }
 solana-sdk = "2.1.5"
+solana-transaction-status = "2.1.6"
 spl-token = { version = "6.0.0", features = ["no-entrypoint"] }
 spl-token-2022 = { version = "4.0.0", features = ["no-entrypoint"] }
 tokio = { version = "1", features = ["full"] }

@@ -27,7 +27,6 @@ use jsonrpsee::{
 };
 use noir_core_primitives::Hash;
 use parity_scale_codec::{Decode, Encode};
-use serde::Serialize;
 use serde_json::Value;
 use solana::{Solana, SolanaServer};
 use std::sync::Arc;
@@ -62,24 +61,28 @@ pub async fn handle_rpc_request(
     )
 }
 
-pub fn error<S: Serialize>(error: ErrorCode, data: Option<S>) -> ErrorObjectOwned {
-    ErrorObject::owned(error.code(), error.message(), data)
+pub fn error(error: ErrorCode, message: Option<String>) -> ErrorObjectOwned {
+    ErrorObject::owned(
+        error.code(),
+        message.unwrap_or(error.message().to_string()),
+        None::<()>,
+    )
 }
 
-pub fn internal_error<S: Serialize>(data: Option<S>) -> ErrorObjectOwned {
-    error(ErrorCode::InternalError, data)
+pub fn internal_error(message: Option<String>) -> ErrorObjectOwned {
+    error(ErrorCode::InternalError, message)
 }
 
-pub fn parse_error<S: Serialize>(data: Option<S>) -> ErrorObjectOwned {
-    error(ErrorCode::ParseError, data)
+pub fn parse_error(message: Option<String>) -> ErrorObjectOwned {
+    error(ErrorCode::ParseError, message)
 }
 
-pub fn invalid_params<S: Serialize>(data: Option<S>) -> ErrorObjectOwned {
-    error(ErrorCode::InvalidParams, data)
+pub fn invalid_params(message: Option<String>) -> ErrorObjectOwned {
+    error(ErrorCode::InvalidParams, message)
 }
 
-pub fn invalid_request<S: Serialize>(data: Option<S>) -> ErrorObjectOwned {
-    error(ErrorCode::InvalidRequest, data)
+pub fn invalid_request(message: Option<String>) -> ErrorObjectOwned {
+    error(ErrorCode::InvalidRequest, message)
 }
 
 pub async fn state_call<I: Encode, O: Decode>(
