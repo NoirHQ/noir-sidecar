@@ -52,9 +52,10 @@ use solana_rpc_client_api::{
 use solana_runtime_api::error::Error;
 use solana_sdk::{
     account::{Account, ReadableAccount},
-    clock::{Slot, UnixTimestamp},
+    clock::UnixTimestamp,
     commitment_config::{CommitmentConfig, CommitmentLevel},
     epoch_info::EpochInfo,
+    message::VersionedMessage,
     packet::PACKET_DATA_SIZE,
     program_pack::Pack,
     pubkey::{Pubkey, PUBKEY_BYTES},
@@ -180,7 +181,10 @@ impl SolanaServer for Solana {
             min_context_slot,
         } = config.unwrap_or_default();
         let hash = self
-            .get_hash_by_context(commitment, min_context_slot)
+            .get_hash_with_config(RpcContextConfig {
+                commitment,
+                min_context_slot,
+            })
             .await?;
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
 
@@ -224,7 +228,10 @@ impl SolanaServer for Solana {
             min_context_slot,
         } = config.unwrap_or_default();
         let hash = self
-            .get_hash_by_context(commitment, min_context_slot)
+            .get_hash_with_config(RpcContextConfig {
+                commitment,
+                min_context_slot,
+            })
             .await?;
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
 
@@ -278,7 +285,10 @@ impl SolanaServer for Solana {
             min_context_slot,
         } = config.unwrap_or_default();
         let hash = self
-            .get_hash_by_context(commitment, min_context_slot)
+            .get_hash_with_config(RpcContextConfig {
+                commitment,
+                min_context_slot,
+            })
             .await?;
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
         optimize_filters(&mut filters);
@@ -357,7 +367,10 @@ impl SolanaServer for Solana {
             min_context_slot,
         } = config.unwrap_or_default();
         let hash = self
-            .get_hash_by_context(commitment, min_context_slot)
+            .get_hash_with_config(RpcContextConfig {
+                commitment,
+                min_context_slot,
+            })
             .await?;
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
         let (token_program_id, mint) = self
@@ -417,7 +430,10 @@ impl SolanaServer for Solana {
             min_context_slot,
         } = config.unwrap_or_default();
         let hash = self
-            .get_hash_by_context(commitment, min_context_slot)
+            .get_hash_with_config(RpcContextConfig {
+                commitment,
+                min_context_slot,
+            })
             .await?;
 
         let Header { number, .. } = self
@@ -515,16 +531,20 @@ impl SolanaServer for Solana {
         config: Option<RpcContextConfig>,
     ) -> RpcResult<RpcResponse<Option<u64>>> {
         tracing::debug!("get_fee_for_message rpc request received");
+        let (_, message) =
+            decode_and_deserialize::<VersionedMessage>(data, TransactionBinaryEncoding::Base64)?;
+        let hash = self
+            .get_hash_with_config(config.unwrap_or_default())
+            .await?;
 
         let method = "getFeeForMessage".to_string();
-        let params =
-            serde_json::to_vec(&(data, config)).map_err(|e| parse_error(Some(e.to_string())))?;
+        let params = serde_json::to_vec(&message).map_err(|e| parse_error(Some(e.to_string())))?;
 
         let response = state_call::<_, Result<Vec<u8>, Error>>(
             &self.client,
             "SolanaRuntimeApi_call",
             (method, params),
-            None,
+            Some(hash),
         )
         .await
         .map_err(|e| internal_error(Some(e.to_string())))?
@@ -546,7 +566,10 @@ impl SolanaServer for Solana {
         } = config.unwrap_or_default();
         let pubkey = verify_pubkey(&pubkey_str)?;
         let hash = self
-            .get_hash_by_context(commitment, min_context_slot)
+            .get_hash_with_config(RpcContextConfig {
+                commitment,
+                min_context_slot,
+            })
             .await?;
 
         let method = "getBalance".to_string();
@@ -617,7 +640,10 @@ impl SolanaServer for Solana {
             min_context_slot,
         } = config.unwrap_or_default();
         let hash = self
-            .get_hash_by_context(commitment, min_context_slot)
+            .get_hash_with_config(RpcContextConfig {
+                commitment,
+                min_context_slot,
+            })
             .await?;
 
         let method = "getTransactionCount".to_string();
@@ -638,21 +664,24 @@ impl SolanaServer for Solana {
 }
 
 impl Solana {
-    async fn get_hash_by_context(
-        &self,
-        commitment: Option<CommitmentConfig>,
-        min_context_slot: Option<Slot>,
-    ) -> RpcResult<Hash> {
+    async fn get_hash_with_config(&self, config: RpcContextConfig) -> RpcResult<Hash> {
+        let RpcContextConfig {
+            commitment,
+            min_context_slot,
+        } = config;
         if let Some(_min_context_slot) = min_context_slot {
             // TODO: Handle min_context_slot
         }
+        Ok(self.hash(commitment).await?)
+    }
 
+    async fn hash(&self, commitment: Option<CommitmentConfig>) -> RpcResult<Hash> {
         if !self.client.is_connected() {
             return Err(internal_error(Some("Client disconnected".to_string())));
         }
 
         let commitment = commitment.unwrap_or_default();
-        let hash: Hash = match commitment.commitment {
+        match commitment.commitment {
             CommitmentLevel::Processed => {
                 self.client
                     .request("chain_getBlockHash", rpc_params!())
@@ -664,9 +693,7 @@ impl Solana {
                     .await
             }
         }
-        .map_err(|e| internal_error(Some(e.to_string())))?;
-
-        Ok(hash)
+        .map_err(|e| internal_error(Some(e.to_string())))
     }
 
     /// Analyze a passed Pubkey that may be a Token program id or Mint address to determine the program
