@@ -27,6 +27,7 @@ use jsonrpsee::{
     ws_client::WsClient,
 };
 use noir_core_primitives::{Hash, Header};
+use serde::{Deserialize, Serialize};
 use solana_account_decoder::{
     encode_ui_account,
     parse_account_data::{AccountAdditionalDataV2, SplTokenAdditionalData},
@@ -55,13 +56,18 @@ use solana_sdk::{
     clock::UnixTimestamp,
     commitment_config::{CommitmentConfig, CommitmentLevel},
     epoch_info::EpochInfo,
-    message::VersionedMessage,
+    inner_instruction::InnerInstructions,
+    message::{v0::LoadedAddresses, AccountKeys, VersionedMessage},
     packet::PACKET_DATA_SIZE,
     program_pack::Pack,
     pubkey::{Pubkey, PUBKEY_BYTES},
-    transaction::VersionedTransaction,
+    transaction::{Result as TransactionResult, VersionedTransaction},
+    transaction_context::{TransactionAccount, TransactionReturnData},
 };
-use solana_transaction_status::{TransactionBinaryEncoding, UiTransactionEncoding};
+use solana_transaction_status::{
+    map_inner_instructions, parse_ui_inner_instructions, TransactionBinaryEncoding,
+    UiTransactionEncoding,
+};
 use spl_token_2022::{
     extension::{
         interest_bearing_mint::InterestBearingConfig, BaseStateWithExtensions, StateWithExtensions,
@@ -69,6 +75,18 @@ use spl_token_2022::{
     state::{Account as TokenAccount, Mint},
 };
 use std::{any::type_name, cmp::min, collections::HashMap, str::FromStr, sync::Arc};
+
+pub type TransactionLogMessages = Vec<String>;
+
+#[derive(Debug, PartialEq, Deserialize, Serialize)]
+pub struct TransactionSimulationResult {
+    pub result: TransactionResult<()>,
+    pub logs: TransactionLogMessages,
+    pub post_simulation_accounts: Vec<TransactionAccount>,
+    pub units_consumed: u64,
+    pub return_data: Option<TransactionReturnData>,
+    pub inner_instructions: Option<Vec<InnerInstructions>>,
+}
 
 #[rpc(client, server)]
 #[async_trait]
@@ -450,6 +468,7 @@ impl SolanaServer for Solana {
             },
             value: RpcBlockhash {
                 blockhash: bs58::encode(hash.as_bytes()).into_string(),
+                // TODO: Update with the correct value for the valid height
                 last_valid_block_height: number as u64,
             },
         })
@@ -491,22 +510,156 @@ impl SolanaServer for Solana {
         config: Option<RpcSimulateTransactionConfig>,
     ) -> RpcResult<RpcResponse<RpcSimulateTransactionResult>> {
         tracing::debug!("simulate_transaction rpc request received");
+        let RpcSimulateTransactionConfig {
+            sig_verify,
+            replace_recent_blockhash,
+            commitment,
+            encoding,
+            accounts: config_accounts,
+            min_context_slot,
+            inner_instructions: enable_cpi_recording,
+        } = config.unwrap_or_default();
+        let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base58);
+        let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
+            invalid_params(Some(format!(
+                "unsupported encoding: {tx_encoding}. Supported encodings: base58, base64"
+            )))
+        })?;
+        let (_, mut unsanitized_tx) =
+            decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
+
+        let hash = self
+            .get_hash_with_config(RpcContextConfig {
+                commitment,
+                min_context_slot,
+            })
+            .await?;
+        let mut blockhash: Option<RpcBlockhash> = None;
+        if replace_recent_blockhash {
+            if sig_verify {
+                return Err(invalid_params(Some(
+                    "sigVerify may not be used with replaceRecentBlockhash".to_string(),
+                )));
+            }
+
+            let recent_blockhash = self.last_blockhash().await?;
+            // TODO: Update with the correct value for the valid height
+            let Header {
+                number: last_valid_block_height,
+                ..
+            } = self
+                .client
+                .request("chain_getHeader", rpc_params!(hash))
+                .await
+                .map_err(|e| internal_error(Some(e.to_string())))?;
+
+            unsanitized_tx
+                .message
+                .set_recent_blockhash(recent_blockhash.0.into());
+            blockhash.replace(RpcBlockhash {
+                blockhash: recent_blockhash.to_string(),
+                last_valid_block_height: last_valid_block_height.into(),
+            });
+        }
 
         let method = "simulateTransaction".to_string();
-        let params =
-            serde_json::to_vec(&(data, config)).map_err(|e| parse_error(Some(e.to_string())))?;
+        let params = serde_json::to_vec(&(unsanitized_tx, sig_verify, enable_cpi_recording))
+            .map_err(|e| parse_error(Some(e.to_string())))?;
 
         let response = state_call::<_, Result<Vec<u8>, Error>>(
             &self.client,
             "SolanaRuntimeApi_call",
             (method, params),
-            None,
+            Some(hash),
         )
         .await
         .map_err(|e| internal_error(Some(e.to_string())))?
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
+        let (
+            TransactionSimulationResult {
+                result,
+                logs,
+                post_simulation_accounts,
+                units_consumed,
+                return_data,
+                inner_instructions,
+            },
+            (static_keys, dynamic_keys),
+        ) = serde_json::from_slice::<(
+            TransactionSimulationResult,
+            (Vec<Pubkey>, Option<(Vec<Pubkey>, Vec<Pubkey>)>),
+        )>(&response)
+        .map_err(|e| internal_error(Some(e.to_string())))?;
+        let dynamic_keys =
+            dynamic_keys.map(|(writable, readonly)| LoadedAddresses { writable, readonly });
+        let account_keys = AccountKeys::new(&static_keys, dynamic_keys.as_ref());
+        let number_of_accounts = account_keys.len();
+
+        let accounts = if let Some(config_accounts) = config_accounts {
+            let accounts_encoding = config_accounts
+                .encoding
+                .unwrap_or(UiAccountEncoding::Base64);
+
+            if accounts_encoding == UiAccountEncoding::Binary
+                || accounts_encoding == UiAccountEncoding::Base58
+            {
+                return Err(invalid_params(Some(
+                    "base58 encoding not supported".to_string(),
+                )));
+            }
+
+            if config_accounts.addresses.len() > number_of_accounts {
+                return Err(invalid_params(Some(format!(
+                    "Too many accounts provided; max {number_of_accounts}"
+                ))));
+            }
+
+            if result.is_err() {
+                Some(vec![None; config_accounts.addresses.len()])
+            } else {
+                let mut post_simulation_accounts_map = HashMap::new();
+                for (pubkey, data) in post_simulation_accounts {
+                    post_simulation_accounts_map.insert(pubkey, data);
+                }
+
+                let pubkeys = config_accounts
+                    .addresses
+                    .iter()
+                    .map(|pubkey| verify_pubkey(pubkey))
+                    .collect::<Result<Vec<Pubkey>, _>>()
+                    .map_err(|e| invalid_params(Some(e.to_string())))?;
+
+                Some(
+                    self.get_encoded_accounts(&pubkeys, accounts_encoding, None, hash)
+                        .await?,
+                )
+            }
+        } else {
+            None
+        };
+
+        let inner_instructions = inner_instructions.map(|info| {
+            map_inner_instructions(info)
+                .map(|converted| parse_ui_inner_instructions(converted, &account_keys))
+                .collect()
+        });
+
+        Ok(RpcResponse {
+            context: RpcResponseContext {
+                slot: 0,
+                api_version: None,
+            },
+            value: RpcSimulateTransactionResult {
+                err: result.err(),
+                logs: Some(logs),
+                accounts,
+                units_consumed: Some(units_consumed),
+                return_data: return_data.map(|return_data| return_data.into()),
+                inner_instructions,
+                replacement_blockhash: blockhash,
+            },
+        })
     }
 
     async fn get_inflation_reward(
@@ -672,7 +825,7 @@ impl Solana {
         if let Some(_min_context_slot) = min_context_slot {
             // TODO: Handle min_context_slot
         }
-        Ok(self.hash(commitment).await?)
+        self.hash(commitment).await
     }
 
     async fn hash(&self, commitment: Option<CommitmentConfig>) -> RpcResult<Hash> {
@@ -694,6 +847,17 @@ impl Solana {
             }
         }
         .map_err(|e| internal_error(Some(e.to_string())))
+    }
+
+    async fn last_blockhash(&self) -> RpcResult<Hash> {
+        if !self.client.is_connected() {
+            return Err(internal_error(Some("Client disconnected".to_string())));
+        }
+
+        self.client
+            .request("chain_getBlockHash", rpc_params!())
+            .await
+            .map_err(|e| internal_error(Some(e.to_string())))
     }
 
     /// Analyze a passed Pubkey that may be a Token program id or Mint address to determine the program
