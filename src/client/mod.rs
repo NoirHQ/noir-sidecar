@@ -45,11 +45,13 @@ pub struct Client {
     tx: Sender<Message>,
 }
 
+pub type Response = Result<Value, ClientError>;
+
 #[derive(Debug)]
 pub struct Request {
     pub method: String,
     pub params: ArrayParams,
-    pub response: oneshot::Sender<Result<Value, ClientError>>,
+    pub response: oneshot::Sender<Response>,
     pub retry: u8,
 }
 
@@ -67,7 +69,7 @@ impl Client {
     where
         R: DeserializeOwned,
     {
-        let (res_tx, res_rx) = tokio::sync::oneshot::channel::<Result<Value, ClientError>>();
+        let (res_tx, res_rx) = oneshot::channel::<Response>();
         self.tx
             .clone()
             .send(Message::Request(Request {

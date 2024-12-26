@@ -16,6 +16,9 @@
 // limitations under the License.
 
 #![allow(clippy::type_complexity)]
+
+pub mod mock;
+
 use super::invalid_request;
 use crate::client::Client;
 use crate::rpc::{internal_error, invalid_params, parse_error, state_call};
@@ -212,8 +215,8 @@ impl SolanaServer for Solana {
             .await?;
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: 0,
-                api_version: None,
+                slot: Default::default(),
+                api_version: Default::default(),
             },
             value: response,
         })
@@ -260,8 +263,8 @@ impl SolanaServer for Solana {
 
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: 0,
-                api_version: None,
+                slot: Default::default(),
+                api_version: Default::default(),
             },
             value: response,
         })
@@ -356,8 +359,8 @@ impl SolanaServer for Solana {
         Ok(match with_context {
             true => OptionalContext::Context(RpcResponse {
                 context: RpcResponseContext {
-                    slot: 0,
-                    api_version: None,
+                    slot: Default::default(),
+                    api_version: Default::default(),
                 },
                 value: accounts,
             }),
@@ -431,8 +434,8 @@ impl SolanaServer for Solana {
 
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: 0,
-                api_version: None,
+                slot: Default::default(),
+                api_version: Default::default(),
             },
             value: accounts,
         })
@@ -648,8 +651,8 @@ impl SolanaServer for Solana {
 
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: 0,
-                api_version: None,
+                slot: Default::default(),
+                api_version: Default::default(),
             },
             value: RpcSimulateTransactionResult {
                 err: result.err(),
@@ -704,7 +707,15 @@ impl SolanaServer for Solana {
         .map_err(|e| internal_error(Some(e.to_string())))?
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
+        let fee: Option<u64> = serde_json::from_slice::<_>(&response)
+            .map_err(|e| internal_error(Some(e.to_string())))?;
+        Ok(RpcResponse {
+            context: RpcResponseContext {
+                slot: Default::default(),
+                api_version: Default::default(),
+            },
+            value: fee,
+        })
     }
 
     async fn get_balance(
