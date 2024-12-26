@@ -17,14 +17,15 @@
 
 #![allow(clippy::type_complexity)]
 use super::invalid_request;
+use crate::client::Client;
 use crate::rpc::{internal_error, invalid_params, parse_error, state_call};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bincode::Options;
+use jsonrpsee::core::params::ArrayParams;
 use jsonrpsee::{
-    core::{async_trait, client::ClientT, RpcResult},
+    core::{async_trait, RpcResult},
     proc_macros::rpc,
     rpc_params,
-    ws_client::WsClient,
 };
 use noir_core_primitives::{Hash, Header};
 use serde::{Deserialize, Serialize};
@@ -173,11 +174,11 @@ pub trait Solana {
 
 #[derive(Clone)]
 pub struct Solana {
-    client: Arc<WsClient>,
+    client: Arc<Client>,
 }
 
 impl Solana {
-    pub fn new(client: Arc<WsClient>) -> Self {
+    pub fn new(client: Arc<Client>) -> Self {
         Self { client }
     }
 }
@@ -753,10 +754,6 @@ impl SolanaServer for Solana {
     async fn get_genesis_hash(&self) -> RpcResult<String> {
         tracing::debug!("get_genesis_hash rpc request received");
 
-        if !self.client.is_connected() {
-            return Err(internal_error(Some("Client disconnected".to_string())));
-        }
-
         let hash: Hash = self
             .client
             .request("chain_getBlockHash", rpc_params!(0))
@@ -829,10 +826,6 @@ impl Solana {
     }
 
     async fn hash(&self, commitment: Option<CommitmentConfig>) -> RpcResult<Hash> {
-        if !self.client.is_connected() {
-            return Err(internal_error(Some("Client disconnected".to_string())));
-        }
-
         let commitment = commitment.unwrap_or_default();
         match commitment.commitment {
             CommitmentLevel::Processed => {
@@ -850,10 +843,6 @@ impl Solana {
     }
 
     async fn last_blockhash(&self) -> RpcResult<Hash> {
-        if !self.client.is_connected() {
-            return Err(internal_error(Some("Client disconnected".to_string())));
-        }
-
         self.client
             .request("chain_getBlockHash", rpc_params!())
             .await
@@ -1070,13 +1059,13 @@ impl Solana {
     pub async fn get_timestamp(&self, hash: Hash) -> RpcResult<UnixTimestamp> {
         let timestamp_key = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
 
-        if !self.client.is_connected() {
-            return Err(internal_error(Some("Client disconnected".to_string())));
-        }
+        let mut params = ArrayParams::new();
+        params.insert(timestamp_key).unwrap();
+        params.insert(hash).unwrap();
 
         let mut response: String = self
             .client
-            .request::<Option<String>, _>("state_getStorage", rpc_params!(timestamp_key, hash))
+            .request::<Option<String>>("state_getStorage", params)
             .await
             .map_err(|e| internal_error(Some(e.to_string())))?
             .ok_or(internal_error(Some("Timestamp not exist".to_string())))?;

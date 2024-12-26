@@ -17,12 +17,11 @@
 
 pub mod solana;
 
+use crate::client::Client;
 use axum::{extract::State, http::StatusCode, Json};
 use jsonrpsee::{
-    core::{client::ClientT, ClientError},
-    rpc_params,
+    core::{params::ArrayParams, ClientError},
     types::{ErrorCode, ErrorObject, ErrorObjectOwned},
-    ws_client::WsClient,
     RpcModule,
 };
 use noir_core_primitives::Hash;
@@ -31,7 +30,7 @@ use serde_json::Value;
 use solana::{Solana, SolanaServer};
 use std::sync::Arc;
 
-pub fn create_rpc_module(client: Arc<WsClient>) -> Result<RpcModule<()>, anyhow::Error> {
+pub fn create_rpc_module(client: Arc<Client>) -> Result<RpcModule<()>, anyhow::Error> {
     let mut module = RpcModule::new(());
 
     module.merge(Solana::new(client.clone()).into_rpc())?;
@@ -86,19 +85,19 @@ pub fn invalid_request(message: Option<String>) -> ErrorObjectOwned {
 }
 
 pub async fn state_call<I: Encode, O: Decode>(
-    client: &WsClient,
+    client: &Client,
     method: &str,
     data: I,
     hash: Option<Hash>,
 ) -> Result<O, ClientError> {
-    if !client.is_connected() {
-        return Err(ClientError::Custom("Client disconnected".to_string()));
-    }
-
     let args = format!("0x{}", hex::encode(data.encode()));
-    let mut res: String = client
-        .request("state_call", rpc_params!(method, args, hash))
-        .await?;
+
+    let mut params = ArrayParams::new();
+    params.insert(method).unwrap();
+    params.insert(args).unwrap();
+    params.insert(hash).unwrap();
+
+    let mut res: String = client.request::<String>("state_call", params).await?;
     if res.starts_with("0x") {
         res = res.strip_prefix("0x").map(|s| s.to_string()).unwrap();
     }
