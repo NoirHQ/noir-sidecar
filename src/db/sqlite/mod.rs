@@ -15,11 +15,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod cli;
-pub mod client;
-pub mod config;
-pub mod db;
-pub mod logger;
-pub mod router;
-pub mod rpc;
-pub mod server;
+pub mod query;
+
+use super::Error;
+use rusqlite::Connection;
+use serde::Deserialize;
+use std::sync::Arc;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SqliteConfig {
+    path: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct Sqlite {
+    db: Arc<Connection>,
+}
+
+impl Sqlite {
+    pub fn create(config: SqliteConfig) -> Result<Self, Error> {
+        let db = match config.path {
+            Some(path) => Connection::open(path),
+            None => Connection::open_in_memory(),
+        }
+        .map(Arc::new)
+        .map_err(|_| Error::ConnectFailed)?;
+
+        Ok(Self { db })
+    }
+}

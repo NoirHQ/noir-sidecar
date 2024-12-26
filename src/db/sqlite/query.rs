@@ -14,12 +14,3 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-pub mod cli;
-pub mod client;
-pub mod config;
-pub mod db;
-pub mod logger;
-pub mod router;
-pub mod rpc;
-pub mod server;
