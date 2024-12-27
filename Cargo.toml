@@ -30,6 +30,7 @@ rusqlite = { version = "0.32.1", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 solana-account-decoder = "2.1.5"
+solana-accounts-db = "2.1.7"
 solana-inline-spl = "2.1.6"
 solana-rpc-client-api = "2.1.5"
 solana-runtime-api = { git = "https://github.com/NoirHQ/noir", rev = "4c5ea4d68b0fe76af6a298ec63145b1b4d423cc1" }

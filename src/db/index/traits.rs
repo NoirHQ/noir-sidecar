@@ -15,5 +15,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod account;
-pub mod traits;
+use solana_accounts_db::accounts_index::AccountIndex;
+use solana_sdk::pubkey::Pubkey;
+
+pub trait AccountsIndex {
+    fn include_key(&self) -> bool;
+    fn get_indexed_keys(&self, index: AccountIndex, index_key: Pubkey) -> Vec<Pubkey>;
+}

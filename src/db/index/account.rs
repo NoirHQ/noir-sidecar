@@ -15,5 +15,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod account;
-pub mod traits;
+use solana_accounts_db::accounts_index::AccountIndex;
+
+pub struct AccountIndexes {
+    pub exclude: bool,
+    pub index: AccountIndex,
+    pub index_key: String,
+    pub key: String,
+}
