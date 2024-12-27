@@ -17,6 +17,7 @@
 
 #![allow(clippy::type_complexity)]
 
+// #[cfg(feature = "mock")]
 pub mod mock;
 
 use super::invalid_request;

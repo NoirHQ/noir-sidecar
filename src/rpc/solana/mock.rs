@@ -108,14 +108,16 @@ impl SolanaServer for MockSolana {
     ) -> RpcResult<RpcResponse<RpcBlockhash>> {
         tracing::debug!("get_latest_blockhash rpc request received");
 
+        let (blockhash, slot) = get_mock_hash_and_slot();
+
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: Default::default(),
+                slot,
                 api_version: Default::default(),
             },
             value: RpcBlockhash {
-                blockhash: Default::default(),
-                last_valid_block_height: Default::default(),
+                blockhash,
+                last_valid_block_height: slot + 360000, // 1 hour
             },
         })
     }
@@ -223,4 +225,11 @@ impl SolanaServer for MockSolana {
 
         Ok(Default::default())
     }
+}
+
+fn get_mock_hash_and_slot() -> (String, u64) {
+    let slot = chrono::Utc::now().timestamp_millis() as u64;
+    let mut hash = [0u8; 32];
+    hash[..8].copy_from_slice(&slot.to_le_bytes());
+    (bs58::encode(hash).into_string(), slot)
 }
