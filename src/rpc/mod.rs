@@ -44,7 +44,7 @@ where
     let mut module = RpcModule::new(());
 
     // #[cfg(feature = "mock")]
-    module.merge(MockSolana.into_rpc())?;
+    module.merge(MockSolana::default().into_rpc())?;
     // #[cfg(not(feature = "mock"))]
     // module.merge(Solana::new(client.clone()).into_rpc())?;
 

@@ -15,38 +15,73 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::SolanaServer;
+use super::{
+    encode_account, filter_known_spl_tokens, get_additional_mint_data,
+    get_multiple_additional_mint_data, get_multiple_token_account_mint, optimize_filters,
+    SolanaServer,
+};
+use crate::rpc::{invalid_params, solana::verify_pubkey};
 use jsonrpsee::core::{async_trait, RpcResult};
-use solana_account_decoder::UiAccount;
+use solana_account_decoder::{
+    encode_ui_account,
+    parse_account_data::{AccountAdditionalDataV2, SplTokenAdditionalData},
+    parse_token::{get_token_account_mint, is_known_spl_token_id},
+    UiAccount, UiAccountData, UiAccountEncoding, UiDataSliceConfig,
+};
+use solana_inline_spl::token::{
+    GenericTokenAccount, SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
+};
 use solana_rpc_client_api::{
     config::{
         RpcAccountInfoConfig, RpcContextConfig, RpcEpochConfig, RpcProgramAccountsConfig,
         RpcSendTransactionConfig, RpcSimulateTransactionConfig, RpcTokenAccountsFilter,
     },
+    filter::{Memcmp, RpcFilterType},
+    request::TokenAccountsFilter,
     response::{
         OptionalContext, Response as RpcResponse, RpcBlockhash, RpcInflationReward,
         RpcKeyedAccount, RpcResponseContext, RpcSimulateTransactionResult,
     },
 };
-use solana_sdk::epoch_info::EpochInfo;
+use solana_sdk::{
+    account::{Account, ReadableAccount},
+    clock::UnixTimestamp,
+    epoch_info::EpochInfo,
+    pubkey::Pubkey,
+};
+use std::collections::HashMap;
 
-pub struct MockSolana;
+#[derive(Default)]
+pub struct MockSolana {
+    accounts: HashMap<Pubkey, Account>,
+}
 
 #[async_trait]
 impl SolanaServer for MockSolana {
     async fn get_account_info(
         &self,
         pubkey_str: String,
-        _config: Option<RpcAccountInfoConfig>,
+        config: Option<RpcAccountInfoConfig>,
     ) -> RpcResult<RpcResponse<Option<UiAccount>>> {
         tracing::debug!("get_account_info rpc request received: {:?}", pubkey_str);
 
+        let pubkey = verify_pubkey(&pubkey_str)?;
+        let RpcAccountInfoConfig {
+            encoding,
+            data_slice: data_slice_config,
+            ..
+        } = config.unwrap_or_default();
+        let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
+
+        let response = self
+            .get_encoded_account(&pubkey, encoding, data_slice_config)
+            .await?;
         Ok(RpcResponse {
             context: RpcResponseContext {
                 slot: Default::default(),
                 api_version: Default::default(),
             },
-            value: Default::default(),
+            value: response,
         })
     }
 
@@ -227,9 +262,321 @@ impl SolanaServer for MockSolana {
     }
 }
 
+impl MockSolana {
+    /// Analyze a passed Pubkey that may be a Token program id or Mint address to determine the program
+    /// id and optional Mint
+    async fn get_token_program_id_and_mint(
+        &self,
+        token_account_filter: TokenAccountsFilter,
+    ) -> RpcResult<(Pubkey, Option<Pubkey>)> {
+        match token_account_filter {
+            TokenAccountsFilter::Mint(mint) => {
+                let (mint_owner, _) = self.get_mint_owner_and_additional_data(&mint).await?;
+                if !is_known_spl_token_id(&mint_owner) {
+                    return Err(invalid_params(Some(
+                        "Invalid param: not a Token mint".to_string(),
+                    )));
+                }
+                Ok((mint_owner, Some(mint)))
+            }
+            TokenAccountsFilter::ProgramId(program_id) => {
+                if is_known_spl_token_id(&program_id) {
+                    Ok((program_id, None))
+                } else {
+                    Err(invalid_params(Some(
+                        "Invalid param: unrecognized Token program id".to_string(),
+                    )))
+                }
+            }
+        }
+    }
+
+    /// Analyze a mint Pubkey that may be the native_mint and get the mint-account owner (token
+    /// program_id) and decimals
+    pub async fn get_mint_owner_and_additional_data(
+        &self,
+        mint: &Pubkey,
+    ) -> RpcResult<(Pubkey, SplTokenAdditionalData)> {
+        if mint == &spl_token::native_mint::id() {
+            Ok((
+                spl_token::id(),
+                SplTokenAdditionalData::with_decimals(spl_token::native_mint::DECIMALS),
+            ))
+        } else {
+            let mint_account = self.get_account(mint).await?.ok_or(invalid_params(Some(
+                "Invalid param: could not find mint".to_string(),
+            )))?;
+            let timestamp = self.get_timestamp().await?;
+            let mint_data = get_additional_mint_data(mint_account.data(), timestamp)?;
+            Ok((*mint_account.owner(), mint_data))
+        }
+    }
+
+    fn get_program_accounts_by_id(&self, _program_id: &Pubkey) -> Vec<Pubkey> {
+        // TODO: Get accounts owned by program
+        Vec::new()
+    }
+
+    pub async fn get_encoded_account(
+        &self,
+        pubkey: &Pubkey,
+        encoding: UiAccountEncoding,
+        data_slice: Option<UiDataSliceConfig>,
+    ) -> RpcResult<Option<UiAccount>> {
+        match self.get_account(pubkey).await? {
+            Some(account) => {
+                let response = if is_known_spl_token_id(account.owner())
+                    && encoding == UiAccountEncoding::JsonParsed
+                {
+                    self.get_parsed_token_account(pubkey, account).await?
+                } else {
+                    encode_account(&account, pubkey, encoding, data_slice)?
+                };
+                Ok(Some(response))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub async fn get_encoded_accounts(
+        &self,
+        pubkeys: &Vec<Pubkey>,
+        encoding: UiAccountEncoding,
+        data_slice: Option<UiDataSliceConfig>,
+    ) -> RpcResult<Vec<Option<UiAccount>>> {
+        let accounts = self.get_accounts(pubkeys).await?;
+
+        if encoding == UiAccountEncoding::JsonParsed {
+            let (spl_tokens, non_spl_tokens) = filter_known_spl_tokens(accounts.clone());
+
+            let spl_token_ui_accounts = self.get_parsed_token_accounts(&spl_tokens).await?;
+            let non_spl_token_ui_accounts = non_spl_tokens
+                .into_iter()
+                .map(|(pubkey, account)| match account {
+                    Some(account) => (
+                        pubkey,
+                        Some(encode_ui_account(
+                            &pubkey, &account, encoding, None, data_slice,
+                        )),
+                    ),
+                    None => (pubkey, None),
+                })
+                .collect::<HashMap<Pubkey, Option<UiAccount>>>();
+
+            Ok(pubkeys
+                .iter()
+                .map(|pubkey| {
+                    spl_token_ui_accounts
+                        .get(pubkey)
+                        .cloned()
+                        .or_else(|| non_spl_token_ui_accounts.get(pubkey).cloned().flatten())
+                })
+                .collect())
+        } else {
+            let ui_accounts = accounts
+                .into_iter()
+                .map(|(pubkey, account)| {
+                    account.map(|account| {
+                        encode_ui_account(&pubkey, &account, encoding, None, data_slice)
+                    })
+                })
+                .collect::<Vec<Option<UiAccount>>>();
+            Ok(ui_accounts)
+        }
+    }
+
+    pub async fn get_parsed_token_account(
+        &self,
+        pubkey: &Pubkey,
+        account: Account,
+    ) -> RpcResult<UiAccount> {
+        let additional_data = if let Some(mint_pubkey) = get_token_account_mint(account.data()) {
+            match self.get_account(&mint_pubkey).await? {
+                Some(mint_account) => {
+                    let timestamp = self.get_timestamp().await?;
+                    let data = get_additional_mint_data(mint_account.data(), timestamp)?;
+                    Some(AccountAdditionalDataV2 {
+                        spl_token_additional_data: Some(data),
+                    })
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+
+        Ok(encode_ui_account(
+            pubkey,
+            &account,
+            UiAccountEncoding::JsonParsed,
+            additional_data,
+            None,
+        ))
+    }
+
+    pub async fn get_account(&self, pubkey: &Pubkey) -> RpcResult<Option<Account>> {
+        Ok(self.accounts.get(pubkey).cloned())
+    }
+
+    pub async fn get_accounts(
+        &self,
+        pubkeys: &[Pubkey],
+    ) -> RpcResult<Vec<(Pubkey, Option<Account>)>> {
+        Ok(pubkeys
+            .iter()
+            .map(|pubkey| (*pubkey, self.accounts.get(pubkey).cloned()))
+            .collect())
+    }
+
+    pub async fn get_timestamp(&self) -> RpcResult<UnixTimestamp> {
+        Ok(get_mock_hash_and_slot().1 as i64)
+    }
+
+    /// Use a set of filters to get an iterator of keyed program accounts from a bank
+    async fn get_filtered_program_accounts(
+        &self,
+        program_id: &Pubkey,
+        mut filters: Vec<RpcFilterType>,
+        _sort_results: bool,
+    ) -> RpcResult<Vec<(Pubkey, Account)>> {
+        optimize_filters(&mut filters);
+
+        let filter_closure = |account: &Account| {
+            filters
+                .iter()
+                .all(|filter_type| filter_allows(filter_type, account))
+        };
+
+        Ok(self
+            .accounts
+            .clone()
+            .into_iter()
+            .filter(|(_, account)| account.owner == *program_id && filter_closure(account))
+            .collect())
+    }
+
+    async fn get_filtered_spl_token_accounts_by_owner(
+        &self,
+        program_id: &Pubkey,
+        owner_key: &Pubkey,
+        mut filters: Vec<RpcFilterType>,
+        sort_results: bool,
+    ) -> RpcResult<Vec<(Pubkey, Account)>> {
+        // The by-owner accounts index checks for Token Account state and Owner address on
+        // inclusion. However, due to the current AccountsDb implementation, an account may remain
+        // in storage as a zero-lamport AccountSharedData::Default() after being wiped and reinitialized in
+        // later updates. We include the redundant filters here to avoid returning these accounts.
+        //
+        // Filter on Token Account state
+        filters.push(RpcFilterType::TokenAccountState);
+        // Filter on Owner address
+        filters.push(RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
+            SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
+            owner_key.to_bytes().into(),
+        )));
+
+        // TODO: Handle account index
+        self.get_filtered_program_accounts(program_id, filters, sort_results)
+            .await
+    }
+
+    async fn get_filtered_spl_token_accounts_by_mint(
+        &self,
+        program_id: &Pubkey,
+        mint_key: &Pubkey,
+        mut filters: Vec<RpcFilterType>,
+        sort_results: bool,
+    ) -> RpcResult<Vec<(Pubkey, Account)>> {
+        // The by-mint accounts index checks for Token Account state and Mint address on inclusion.
+        // However, due to the current AccountsDb implementation, an account may remain in storage
+        // as be zero-lamport AccountSharedData::Default() after being wiped and reinitialized in later
+        // updates. We include the redundant filters here to avoid returning these accounts.
+        //
+        // Filter on Token Account state
+        filters.push(RpcFilterType::TokenAccountState);
+        // Filter on Mint address
+        filters.push(RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
+            SPL_TOKEN_ACCOUNT_MINT_OFFSET,
+            mint_key.to_bytes().into(),
+        )));
+
+        // TODO: Handle account index
+        self.get_filtered_program_accounts(program_id, filters, sort_results)
+            .await
+    }
+
+    pub async fn get_parsed_token_accounts(
+        &self,
+        keyed_accounts: &[(Pubkey, Account)],
+    ) -> RpcResult<HashMap<Pubkey, UiAccount>> {
+        let mint_pubkeys = get_multiple_token_account_mint(keyed_accounts);
+        let mint_accounts: HashMap<Pubkey, Account> = self
+            .get_accounts(&mint_pubkeys.values().cloned().collect::<Vec<Pubkey>>())
+            .await?
+            .into_iter()
+            .filter_map(|(mint_pubkey, mint_account)| {
+                mint_account.map(|account| (mint_pubkey, account))
+            })
+            .collect();
+        let timestamp = self.get_timestamp().await?;
+        let account_additional_data = get_multiple_additional_mint_data(&mint_accounts, timestamp);
+
+        Ok(keyed_accounts
+            .iter()
+            .map(|(pubkey, account)| {
+                let additional_data = mint_pubkeys
+                    .get(pubkey)
+                    .and_then(|mint_pubkey| account_additional_data.get(mint_pubkey))
+                    .cloned();
+
+                (
+                    *pubkey,
+                    encode_ui_account(
+                        pubkey,
+                        account,
+                        UiAccountEncoding::JsonParsed,
+                        additional_data,
+                        None,
+                    ),
+                )
+            })
+            .collect())
+    }
+
+    pub async fn get_parsed_token_keyed_accounts(
+        &self,
+        keyed_accounts: &[(Pubkey, Account)],
+    ) -> RpcResult<Vec<RpcKeyedAccount>> {
+        Ok(self
+            .get_parsed_token_accounts(keyed_accounts)
+            .await?
+            .into_iter()
+            .filter_map(
+                |(pubkey, maybe_encoded_account)| match maybe_encoded_account.data {
+                    UiAccountData::Json(_) => Some(RpcKeyedAccount {
+                        pubkey: pubkey.to_string(),
+                        account: maybe_encoded_account,
+                    }),
+                    _ => None,
+                },
+            )
+            .collect())
+    }
+}
+
 fn get_mock_hash_and_slot() -> (String, u64) {
     let slot = chrono::Utc::now().timestamp_millis() as u64;
     let mut hash = [0u8; 32];
     hash[..8].copy_from_slice(&slot.to_le_bytes());
     (bs58::encode(hash).into_string(), slot)
+}
+
+pub fn filter_allows(filter: &RpcFilterType, account: &Account) -> bool {
+    match filter {
+        RpcFilterType::DataSize(size) => account.data().len() as u64 == *size,
+        RpcFilterType::Memcmp(compare) => compare.bytes_match(account.data()),
+        RpcFilterType::TokenAccountState => {
+            solana_inline_spl::token::Account::valid_account_data(account.data())
+        }
+    }
 }
