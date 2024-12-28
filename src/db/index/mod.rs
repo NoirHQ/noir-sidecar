@@ -16,4 +16,11 @@
 // limitations under the License.
 
 pub mod account;
-pub mod traits;
+
+#[derive(Debug)]
+pub enum Error {
+    SqliteError(rusqlite::Error),
+    ParseError,
+    InsertFailed,
+    CreateFailed,
+}

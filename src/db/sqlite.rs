@@ -14,3 +14,31 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+use super::Error;
+use rusqlite::Connection;
+use serde::Deserialize;
+use std::sync::Arc;
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SqliteConfig {
+    path: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct Sqlite {
+    pub conn: Arc<Connection>,
+}
+
+impl Sqlite {
+    pub fn open(config: SqliteConfig) -> Result<Self, Error> {
+        let conn = match config.path {
+            Some(path) => Connection::open(path),
+            None => Connection::open_in_memory(),
+        }
+        .map(Arc::new)
+        .map_err(|_| Error::ConnectFailed)?;
+
+        Ok(Self { conn })
+    }
+}
