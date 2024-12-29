@@ -15,8 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Error;
-use rusqlite::Connection;
+use rusqlite::{Connection, Error};
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -36,9 +35,12 @@ impl Sqlite {
             Some(path) => Connection::open(path),
             None => Connection::open_in_memory(),
         }
-        .map(Arc::new)
-        .map_err(|_| Error::ConnectFailed)?;
+        .map(Arc::new)?;
 
         Ok(Self { conn })
+    }
+
+    pub fn conn(&self) -> &Connection {
+        self.conn.as_ref()
     }
 }

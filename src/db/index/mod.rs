@@ -15,12 +15,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod account;
+pub mod sqlite;
+
+use solana_accounts_db::accounts_index::AccountIndex;
+use solana_sdk::pubkey::{ParsePubkeyError, Pubkey};
 
 #[derive(Debug)]
 pub enum Error {
     SqliteError(rusqlite::Error),
-    ParseError,
-    InsertFailed,
-    CreateFailed,
+    ParsePubkeyError(ParsePubkeyError),
+}
+
+pub trait AccountsIndex {
+    fn get_indexed_keys(
+        &self,
+        index: AccountIndex,
+        index_key: Pubkey,
+    ) -> Result<Vec<Pubkey>, Error>;
+
+    fn insert_index(
+        &self,
+        index: AccountIndex,
+        index_key: Pubkey,
+        indexed_key: Pubkey,
+    ) -> Result<(), Error>;
+
+    fn create_index(&self) -> Result<(), Error>;
+}
+
+pub fn get_index_name(index: &AccountIndex) -> &'static str {
+    match index {
+        AccountIndex::ProgramId => "program_id",
+        AccountIndex::SplTokenMint => "spl_token_mint",
+        AccountIndex::SplTokenOwner => "spl_token_owner",
+    }
 }

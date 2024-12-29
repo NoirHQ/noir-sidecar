@@ -17,8 +17,3 @@
 
 pub mod index;
 pub mod sqlite;
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum Error {
-    ConnectFailed,
-}
