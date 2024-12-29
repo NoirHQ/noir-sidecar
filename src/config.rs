@@ -16,6 +16,7 @@
 // limitations under the License.
 
 use crate::client::ClientConfig;
+use crate::db::sqlite::SqliteConfig;
 use crate::server::ServerConfig;
 use anyhow::Context;
 use serde::Deserialize;
@@ -26,6 +27,7 @@ use std::path;
 pub struct Config {
     pub server: ServerConfig,
     pub client: ClientConfig,
+    pub sqlite: SqliteConfig,
 }
 
 // read config file specified in command line

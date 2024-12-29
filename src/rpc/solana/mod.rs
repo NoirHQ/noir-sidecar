@@ -21,6 +21,7 @@ pub mod mock;
 
 use super::invalid_request;
 use crate::client::Client;
+use crate::db::index::AccountsIndex;
 use crate::rpc::{internal_error, invalid_params, parse_error, state_call};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bincode::Options;
@@ -38,6 +39,7 @@ use solana_account_decoder::{
     parse_token::{get_token_account_mint, is_known_spl_token_id},
     UiAccount, UiAccountData, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
 };
+use solana_accounts_db::accounts_index::AccountIndex;
 use solana_inline_spl::{
     token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
     token_2022::{self, ACCOUNTTYPE_ACCOUNT},
@@ -176,18 +178,25 @@ pub trait Solana {
 }
 
 #[derive(Clone)]
-pub struct Solana {
+pub struct Solana<I> {
     client: Arc<Client>,
+    accounts_index: Arc<I>,
 }
 
-impl Solana {
-    pub fn new(client: Arc<Client>) -> Self {
-        Self { client }
+impl<I> Solana<I> {
+    pub fn new(client: Arc<Client>, accounts_index: Arc<I>) -> Self {
+        Self {
+            client,
+            accounts_index,
+        }
     }
 }
 
 #[async_trait]
-impl SolanaServer for Solana {
+impl<I> SolanaServer for Solana<I>
+where
+    I: 'static + Sync + Send + AccountsIndex,
+{
     async fn get_account_info(
         &self,
         pubkey_str: String,
@@ -335,8 +344,16 @@ impl SolanaServer for Solana {
                 )
                 .await?
             } else {
-                self.get_filtered_program_accounts(&program_id, filters, sort_results, hash)
-                    .await?
+                let indexed_keys = self.get_indexed_keys(AccountIndex::ProgramId, &program_id)?;
+
+                self.get_filtered_program_accounts(
+                    &program_id,
+                    indexed_keys,
+                    filters,
+                    sort_results,
+                    hash,
+                )
+                .await?
             }
         };
 
@@ -824,7 +841,10 @@ impl SolanaServer for Solana {
     }
 }
 
-impl Solana {
+impl<I> Solana<I>
+where
+    I: AccountsIndex,
+{
     async fn get_hash_with_config(&self, config: RpcContextConfig) -> RpcResult<Hash> {
         let RpcContextConfig {
             commitment,
@@ -914,9 +934,16 @@ impl Solana {
         }
     }
 
-    fn get_program_accounts_by_id(&self, _program_id: &Pubkey) -> Vec<Pubkey> {
-        // TODO: Get accounts owned by program
-        Vec::new()
+    fn get_indexed_keys(&self, index: AccountIndex, index_key: &Pubkey) -> RpcResult<Vec<Pubkey>> {
+        self.accounts_index
+            .get_indexed_keys(&index, index_key)
+            .map_err(|e| {
+                tracing::error!("{:?}", e);
+                internal_error(Some(format!(
+                    "Failed to get indexed keys. index: {:?}, index_key: {}",
+                    index, index_key
+                )))
+            })
     }
 
     pub async fn get_encoded_account(
@@ -1093,16 +1120,15 @@ impl Solana {
     async fn get_filtered_program_accounts(
         &self,
         program_id: &Pubkey,
+        indexed_keys: Vec<Pubkey>,
         mut filters: Vec<RpcFilterType>,
         _sort_results: bool,
         hash: Hash,
     ) -> RpcResult<Vec<(Pubkey, Account)>> {
         optimize_filters(&mut filters);
 
-        let accounts = self.get_program_accounts_by_id(program_id);
-
         let method = "getProgramAccounts".to_string();
-        let params = serde_json::to_vec(&(program_id, accounts, filters))
+        let params = serde_json::to_vec(&(program_id, indexed_keys, filters))
             .map_err(|e| parse_error(Some(e.to_string())))?;
 
         let response = state_call::<_, Result<Vec<u8>, Error>>(
@@ -1140,8 +1166,9 @@ impl Solana {
             owner_key.to_bytes().into(),
         )));
 
-        // TODO: Handle account index
-        self.get_filtered_program_accounts(program_id, filters, sort_results, hash)
+        let indexed_keys = self.get_indexed_keys(AccountIndex::SplTokenOwner, owner_key)?;
+
+        self.get_filtered_program_accounts(program_id, indexed_keys, filters, sort_results, hash)
             .await
     }
 
@@ -1166,8 +1193,9 @@ impl Solana {
             mint_key.to_bytes().into(),
         )));
 
-        // TODO: Handle account index
-        self.get_filtered_program_accounts(program_id, filters, sort_results, hash)
+        let indexed_keys = self.get_indexed_keys(AccountIndex::SplTokenMint, mint_key)?;
+
+        self.get_filtered_program_accounts(program_id, indexed_keys, filters, sort_results, hash)
             .await
     }
 

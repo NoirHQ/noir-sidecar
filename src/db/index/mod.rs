@@ -24,20 +24,21 @@ use solana_sdk::pubkey::{ParsePubkeyError, Pubkey};
 pub enum Error {
     SqliteError(rusqlite::Error),
     ParsePubkeyError(ParsePubkeyError),
+    MutexError,
 }
 
 pub trait AccountsIndex {
     fn get_indexed_keys(
         &self,
-        index: AccountIndex,
-        index_key: Pubkey,
+        index: &AccountIndex,
+        index_key: &Pubkey,
     ) -> Result<Vec<Pubkey>, Error>;
 
     fn insert_index(
         &self,
-        index: AccountIndex,
-        index_key: Pubkey,
-        indexed_key: Pubkey,
+        index: &AccountIndex,
+        index_key: &Pubkey,
+        indexed_key: &Pubkey,
     ) -> Result<(), Error>;
 
     fn create_index(&self) -> Result<(), Error>;

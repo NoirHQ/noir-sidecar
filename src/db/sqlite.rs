@@ -17,7 +17,7 @@
 
 use rusqlite::{Connection, Error};
 use serde::Deserialize;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SqliteConfig {
@@ -26,7 +26,7 @@ pub struct SqliteConfig {
 
 #[derive(Clone)]
 pub struct Sqlite {
-    pub conn: Arc<Connection>,
+    pub conn: Arc<Mutex<Connection>>,
 }
 
 impl Sqlite {
@@ -35,12 +35,9 @@ impl Sqlite {
             Some(path) => Connection::open(path),
             None => Connection::open_in_memory(),
         }
+        .map(Mutex::new)
         .map(Arc::new)?;
 
         Ok(Self { conn })
-    }
-
-    pub fn conn(&self) -> &Connection {
-        self.conn.as_ref()
     }
 }

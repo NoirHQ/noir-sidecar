@@ -15,7 +15,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use noir_sidecar::{client::Client, rpc::create_rpc_module};
+use noir_sidecar::{
+    client::Client,
+    db::{index::sqlite::SqliteAccountsIndex, sqlite::Sqlite},
+    rpc::create_rpc_module,
+};
 use std::sync::Arc;
 
 #[tokio::main]
@@ -29,7 +33,10 @@ async fn main() -> anyhow::Result<()> {
 
     let (tx, rx) = tokio::sync::mpsc::channel(100);
     let client = Arc::new(Client::new(config.client, tx.clone()));
-    let module = create_rpc_module(client.clone())
+
+    let db = Sqlite::open(config.sqlite).map(Arc::new).unwrap();
+    let accounts_index = Arc::new(SqliteAccountsIndex::create(db));
+    let module = create_rpc_module(client.clone(), accounts_index)
         .map(Arc::new)
         .expect("failed to create jsonrpc handler.");
 

@@ -34,13 +34,18 @@ impl SqliteAccountsIndex {
 impl AccountsIndex for SqliteAccountsIndex {
     fn get_indexed_keys(
         &self,
-        index: AccountIndex,
-        index_key: Pubkey,
+        index: &AccountIndex,
+        index_key: &Pubkey,
     ) -> Result<Vec<Pubkey>, Error> {
-        let index_name = get_index_name(&index);
-        let mut stmt = self
+        let index_name = get_index_name(index);
+        let conn = self
             .db
-            .conn()
+            .conn
+            .as_ref()
+            .lock()
+            .map_err(|_| Error::MutexError)?;
+
+        let mut stmt = conn
             .prepare(
                 "SELECT indexed_key FROM accounts_index where index_name = ?1 AND index_key = ?2",
             )
@@ -64,15 +69,19 @@ impl AccountsIndex for SqliteAccountsIndex {
 
     fn insert_index(
         &self,
-        index: AccountIndex,
-        index_key: Pubkey,
-        indexed_key: Pubkey,
+        index: &AccountIndex,
+        index_key: &Pubkey,
+        indexed_key: &Pubkey,
     ) -> Result<(), Error> {
-        let index_name = get_index_name(&index);
-        let inserted = self
+        let index_name = get_index_name(index);
+        let conn = self
             .db
-            .conn()
-            .execute(
+            .conn
+            .as_ref()
+            .lock()
+            .map_err(|_| Error::MutexError)?;
+
+        let inserted = conn.execute(
                 "INSERT INTO accounts_index (index_name, index_key, indexed_key) VALUES (?1, ?2, ?3)",
                 [index_name, &index_key.to_string(), &indexed_key.to_string()],
             )
@@ -86,9 +95,14 @@ impl AccountsIndex for SqliteAccountsIndex {
     }
 
     fn create_index(&self) -> Result<(), Error> {
-        let mut stmt = self
+        let conn = self
             .db
-            .conn()
+            .conn
+            .as_ref()
+            .lock()
+            .map_err(|_| Error::MutexError)?;
+
+        let mut stmt = conn
             .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='accounts_index'")
             .map_err(Error::SqliteError)?;
 
@@ -96,9 +110,7 @@ impl AccountsIndex for SqliteAccountsIndex {
             return Ok(());
         }
 
-        let _ = self
-            .db
-            .conn()
+        let _ = conn
             .execute(
                 "CREATE TABLE IF NOT EXISTS accounts_index (
                         index_name TEXT NOT NULL,
@@ -110,9 +122,7 @@ impl AccountsIndex for SqliteAccountsIndex {
             )
             .map_err(Error::SqliteError)?;
 
-        let _ = self
-            .db
-            .conn()
+        let _ = conn
             .execute(
                 "CREATE INDEX idx_accounts_index ON accounts_index (index_name, index_key)",
                 [],
@@ -141,10 +151,10 @@ mod tests {
         let indexed_key = Pubkey::new_unique();
 
         let result =
-            accounts_index.insert_index(AccountIndex::SplTokenOwner, index_key, indexed_key);
+            accounts_index.insert_index(&AccountIndex::SplTokenOwner, &index_key, &indexed_key);
         assert!(result.is_ok());
 
-        let indexed_keys = accounts_index.get_indexed_keys(index, index_key).unwrap();
+        let indexed_keys = accounts_index.get_indexed_keys(&index, &index_key).unwrap();
         assert!(indexed_keys[0] == indexed_key);
     }
 }
