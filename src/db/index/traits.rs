@@ -25,6 +25,7 @@ pub trait AccountsIndex {
         &self,
         index: &AccountIndex,
         index_key: &Pubkey,
+        sort_results: bool,
     ) -> Result<Vec<Pubkey>, Error>;
 
     async fn insert_index(

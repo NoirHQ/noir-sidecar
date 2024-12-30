@@ -37,6 +37,7 @@ impl traits::AccountsIndex for SqliteAccountsIndex {
         &self,
         index: &AccountIndex,
         index_key: &Pubkey,
+        sort_results: bool,
     ) -> Result<Vec<Pubkey>, Error> {
         let index_name = get_index_name(index);
         let conn = self
@@ -46,11 +47,13 @@ impl traits::AccountsIndex for SqliteAccountsIndex {
             .lock()
             .map_err(|_| Error::MutexError)?;
 
-        let mut stmt = conn
-            .prepare(
-                "SELECT indexed_key FROM accounts_index where index_name = ?1 AND index_key = ?2",
-            )
-            .map_err(Error::SqliteError)?;
+        let sql = if sort_results {
+            "SELECT indexed_key FROM accounts_index where index_name = ?1 AND index_key = ?2 ORDER BY indexed_key"
+        } else {
+            "SELECT indexed_key FROM accounts_index where index_name = ?1 AND index_key = ?2"
+        };
+
+        let mut stmt = conn.prepare(sql).map_err(Error::SqliteError)?;
 
         let rows = stmt
             .query_map([index_name, &index_key.to_string()], |row| {
@@ -112,21 +115,17 @@ impl traits::AccountsIndex for SqliteAccountsIndex {
         }
 
         let _ = conn
-            .execute(
-                "CREATE TABLE IF NOT EXISTS accounts_index (
-                        index_name TEXT NOT NULL,
-                        index_key TEXT NOT NULL,
-                        indexed_key TEXT NOT NULL,
-                        UNIQUE (index_name, index_key, indexed_key)
-                    )",
-                [],
-            )
-            .map_err(Error::SqliteError)?;
-
-        let _ = conn
-            .execute(
-                "CREATE INDEX idx_accounts_index ON accounts_index (index_name, index_key)",
-                [],
+            .execute_batch(
+                "BEGIN;
+                CREATE TABLE IF NOT EXISTS accounts_index (
+                    index_name TEXT NOT NULL,
+                    index_key TEXT NOT NULL,
+                    indexed_key TEXT NOT NULL,
+                    UNIQUE (index_name, index_key, indexed_key)
+                );
+                CREATE INDEX index_accounts_index_index_name_and_index_key ON accounts_index (index_name, index_key);
+                CREATE INDEX index_accounts_index_indexed_key ON accounts_index (indexed_key);
+                COMMIT;",
             )
             .map_err(Error::SqliteError)?;
 
@@ -158,7 +157,7 @@ mod tests {
         assert!(result.is_ok());
 
         let indexed_keys = accounts_index
-            .get_indexed_keys(&index, &index_key)
+            .get_indexed_keys(&index, &index_key, false)
             .await
             .unwrap();
         assert!(indexed_keys[0] == indexed_key);

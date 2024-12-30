@@ -37,16 +37,18 @@ impl traits::AccountsIndex for PostgresAccountsIndex {
         &self,
         index: &AccountIndex,
         index_key: &Pubkey,
+        sort_results: bool,
     ) -> Result<Vec<Pubkey>, Error> {
         let index_name = get_index_name(index);
         let conn = self.db.as_ref().conn().await.ok_or(Error::PoolError)?;
 
-        let stmt = conn
-            .prepare(
-                "SELECT indexed_key FROM accounts_index where index_name = $1 AND index_key = $2",
-            )
-            .await
-            .map_err(Error::PostgresError)?;
+        let sql = if sort_results {
+            "SELECT indexed_key FROM accounts_index where index_name = $1 AND index_key = $2 ORDER BY indexed_key"
+        } else {
+            "SELECT indexed_key FROM accounts_index where index_name = $1 AND index_key = $2"
+        };
+
+        let stmt = conn.prepare(sql).await.map_err(Error::PostgresError)?;
 
         let rows = conn
             .query(&stmt, &[&index_name, &index_key.to_string()])
@@ -116,7 +118,15 @@ impl traits::AccountsIndex for PostgresAccountsIndex {
 
         let _ = conn
             .execute(
-                "CREATE INDEX idx_accounts_index ON accounts_index (index_name, index_key)",
+                "CREATE INDEX index_accounts_index_index_name_and_index_key ON accounts_index (index_name, index_key)",
+                &[],
+            )
+            .await
+            .map_err(Error::PostgresError)?;
+
+        let _ = conn
+            .execute(
+                "CREATE INDEX index_accounts_index_indexed_key ON accounts_index (indexed_key)",
                 &[],
             )
             .await

@@ -289,7 +289,6 @@ where
             program_id_str
         );
         let program_id = verify_pubkey(&program_id_str)?;
-        // TODO: Handle sort_results
         let (config, mut filters, with_context, sort_results) = if let Some(config) = config {
             (
                 Some(config.account_config),
@@ -345,7 +344,7 @@ where
                 .await?
             } else {
                 let indexed_keys = self
-                    .get_indexed_keys(AccountIndex::ProgramId, &program_id)
+                    .get_indexed_keys(AccountIndex::ProgramId, &program_id, sort_results)
                     .await?;
 
                 self.get_filtered_program_accounts(
@@ -940,9 +939,10 @@ where
         &self,
         index: AccountIndex,
         index_key: &Pubkey,
+        sort_results: bool,
     ) -> RpcResult<Vec<Pubkey>> {
         self.accounts_index
-            .get_indexed_keys(&index, index_key)
+            .get_indexed_keys(&index, index_key, sort_results)
             .await
             .map_err(|e| {
                 tracing::error!("{:?}", e);
@@ -1174,7 +1174,7 @@ where
         )));
 
         let indexed_keys = self
-            .get_indexed_keys(AccountIndex::SplTokenOwner, owner_key)
+            .get_indexed_keys(AccountIndex::SplTokenOwner, owner_key, sort_results)
             .await?;
 
         self.get_filtered_program_accounts(program_id, indexed_keys, filters, sort_results, hash)
@@ -1203,7 +1203,7 @@ where
         )));
 
         let indexed_keys = self
-            .get_indexed_keys(AccountIndex::SplTokenMint, mint_key)
+            .get_indexed_keys(AccountIndex::SplTokenMint, mint_key, sort_results)
             .await?;
 
         self.get_filtered_program_accounts(program_id, indexed_keys, filters, sort_results, hash)
