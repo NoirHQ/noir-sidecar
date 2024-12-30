@@ -137,6 +137,7 @@ impl traits::AccountsIndex for SqliteAccountsIndex {
 mod tests {
     use super::*;
     use crate::db::sqlite::{Sqlite, SqliteConfig};
+    use traits::AccountsIndex;
 
     #[test]
     fn test_get_indexed_keys() {
