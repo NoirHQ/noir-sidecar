@@ -17,7 +17,7 @@
 
 pub mod solana;
 
-use crate::{client::Client, db::index::AccountsIndex};
+use crate::{client::Client, db::index::traits};
 use axum::{extract::State, http::StatusCode, Json};
 use jsonrpsee::{
     core::{params::ArrayParams, ClientError},
@@ -35,7 +35,7 @@ pub fn create_rpc_module<I>(
     accounts_index: Arc<I>,
 ) -> Result<RpcModule<()>, anyhow::Error>
 where
-    I: 'static + Sync + Send + AccountsIndex,
+    I: 'static + Sync + Send + traits::AccountsIndex,
 {
     let mut module = RpcModule::new(());
 

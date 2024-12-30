@@ -21,7 +21,7 @@ pub mod mock;
 
 use super::invalid_request;
 use crate::client::Client;
-use crate::db::index::AccountsIndex;
+use crate::db::index::traits;
 use crate::rpc::{internal_error, invalid_params, parse_error, state_call};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bincode::Options;
@@ -195,7 +195,7 @@ impl<I> Solana<I> {
 #[async_trait]
 impl<I> SolanaServer for Solana<I>
 where
-    I: 'static + Sync + Send + AccountsIndex,
+    I: 'static + Sync + Send + traits::AccountsIndex,
 {
     async fn get_account_info(
         &self,
@@ -843,7 +843,7 @@ where
 
 impl<I> Solana<I>
 where
-    I: AccountsIndex,
+    I: traits::AccountsIndex,
 {
     async fn get_hash_with_config(&self, config: RpcContextConfig) -> RpcResult<Hash> {
         let RpcContextConfig {

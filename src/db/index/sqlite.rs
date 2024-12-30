@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_index_name, AccountsIndex, Error};
+use super::{get_index_name, traits, Error};
 use crate::db::sqlite::Sqlite;
 use solana_accounts_db::accounts_index::AccountIndex;
 use solana_sdk::pubkey::Pubkey;
@@ -31,7 +31,7 @@ impl SqliteAccountsIndex {
     }
 }
 
-impl AccountsIndex for SqliteAccountsIndex {
+impl traits::AccountsIndex for SqliteAccountsIndex {
     fn get_indexed_keys(
         &self,
         index: &AccountIndex,

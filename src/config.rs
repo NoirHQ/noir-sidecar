@@ -16,6 +16,7 @@
 // limitations under the License.
 
 use crate::client::ClientConfig;
+use crate::db::postgres::PostgresConfig;
 use crate::db::sqlite::SqliteConfig;
 use crate::server::ServerConfig;
 use anyhow::Context;
@@ -28,6 +29,7 @@ pub struct Config {
     pub server: ServerConfig,
     pub client: ClientConfig,
     pub sqlite: Option<SqliteConfig>,
+    pub postgres: Option<PostgresConfig>,
 }
 
 // read config file specified in command line

@@ -16,4 +16,5 @@
 // limitations under the License.
 
 pub mod index;
+pub mod postgres;
 pub mod sqlite;

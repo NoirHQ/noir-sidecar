@@ -15,26 +15,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod postgres;
-pub mod sqlite;
-pub mod traits;
+use super::Error;
 use solana_accounts_db::accounts_index::AccountIndex;
-use solana_sdk::pubkey::ParsePubkeyError;
+use solana_sdk::pubkey::Pubkey;
 
-#[derive(Debug)]
-pub enum Error {
-    SqliteError(rusqlite::Error),
-    PostgresError(tokio_postgres::Error),
-    ParsePubkeyError(ParsePubkeyError),
-    UnexpectedRowCount(usize),
-    MutexError,
-    PoolError,
-}
+pub trait AccountsIndex {
+    fn get_indexed_keys(
+        &self,
+        index: &AccountIndex,
+        index_key: &Pubkey,
+    ) -> Result<Vec<Pubkey>, Error>;
 
-pub fn get_index_name(index: &AccountIndex) -> &'static str {
-    match index {
-        AccountIndex::ProgramId => "program_id",
-        AccountIndex::SplTokenMint => "spl_token_mint",
-        AccountIndex::SplTokenOwner => "spl_token_owner",
-    }
+    fn insert_index(
+        &self,
+        index: &AccountIndex,
+        index_key: &Pubkey,
+        indexed_key: &Pubkey,
+    ) -> Result<(), Error>;
+
+    fn create_index(&self) -> Result<(), Error>;
 }

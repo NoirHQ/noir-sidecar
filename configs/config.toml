@@ -9,5 +9,12 @@ endpoint = "ws://127.0.0.1:9944"
 request_timeout_seconds = 30
 connection_timeout_seconds = 30
 
-[sqlite]
-path = "sidecar.db"
+# [sqlite]
+# path = "sidecar.db"
+
+# [postgres]
+# host = "127.0.0.1"
+# port = 5432
+# dbname = "postgres"
+# user = "postgres"
+# password = "postgres"

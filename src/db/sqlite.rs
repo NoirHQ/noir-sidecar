@@ -32,7 +32,7 @@ pub struct Sqlite {
 impl Sqlite {
     pub fn open(config: Option<SqliteConfig>) -> Result<Self, Error> {
         let config = config.unwrap_or_default();
-        
+
         let conn = match config.path {
             Some(path) => Connection::open(path),
             None => Connection::open_in_memory(),
