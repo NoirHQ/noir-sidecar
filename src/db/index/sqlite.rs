@@ -116,7 +116,7 @@ impl AccountsIndex for SqliteAccountsIndex {
                         index_name TEXT NOT NULL,
                         index_key TEXT NOT NULL,
                         indexed_key TEXT NOT NULL,
-                        UNIQUE (index_name, index_key)
+                        UNIQUE (index_name, index_key, indexed_key)
                     )",
                 [],
             )
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_get_indexed_keys() {
-        let db = Sqlite::open(SqliteConfig::default()).unwrap();
+        let db = Sqlite::open(Some(SqliteConfig::default())).unwrap();
         let accounts_index = SqliteAccountsIndex::create(Arc::new(db));
 
         let result = accounts_index.create_index();

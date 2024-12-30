@@ -36,9 +36,10 @@ async fn main() -> anyhow::Result<()> {
 
     let db = Sqlite::open(config.sqlite).map(Arc::new).unwrap();
     let accounts_index = Arc::new(SqliteAccountsIndex::create(db));
+
     let module = create_rpc_module(client.clone(), accounts_index)
         .map(Arc::new)
-        .expect("failed to create jsonrpc handler.");
+        .expect("Failed to create jsonrpc handler.");
 
     let server = noir_sidecar::server::SidecarServer::new(config.server);
 

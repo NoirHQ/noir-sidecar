@@ -27,7 +27,7 @@ use std::path;
 pub struct Config {
     pub server: ServerConfig,
     pub client: ClientConfig,
-    pub sqlite: SqliteConfig,
+    pub sqlite: Option<SqliteConfig>,
 }
 
 // read config file specified in command line
