@@ -75,7 +75,7 @@ impl traits::AccountsIndex for PostgresAccountsIndex {
         let conn = self.db.as_ref().conn().await.ok_or(Error::PoolError)?;
 
         let inserted = conn.execute(
-                "INSERT INTO accounts_index (index_name, index_key, indexed_key) VALUES (?1, ?2, ?3)",
+                "INSERT INTO accounts_index (index_name, index_key, indexed_key) VALUES ($1, $2, $3)",
                 &[&index_name, &index_key.to_string(), &indexed_key.to_string()],
             )
             .await
