@@ -15,12 +15,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use r2d2_postgres::{
-    postgres::{Config, NoTls},
-    r2d2::{Pool, PooledConnection},
-    PostgresConnectionManager,
-};
+use deadpool_postgres::{Config, Object, Pool, PoolConfig, Runtime};
 use serde::Deserialize;
+use tokio_postgres::NoTls;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct PostgresConfig {
@@ -29,28 +26,34 @@ pub struct PostgresConfig {
     dbname: Option<String>,
     user: Option<String>,
     password: Option<String>,
+    pool_max_size: Option<usize>,
 }
 
 pub struct Postgres {
-    pool: Pool<PostgresConnectionManager<NoTls>>,
+    pool: Pool,
 }
 
 impl Postgres {
     pub fn create_pool(config: PostgresConfig) -> Self {
-        let postgres_config = Config::new()
-            .host(&config.host.unwrap_or("127.0.0.1".to_string()))
-            .port(config.port.unwrap_or(5432))
-            .dbname(&config.dbname.unwrap_or("postgres".to_string()))
-            .user(&config.user.unwrap_or("postgres".to_string()))
-            .password(config.password.unwrap_or("postgres".to_string()))
-            .to_owned();
-        let manager = PostgresConnectionManager::new(postgres_config, NoTls);
-        let pool = Pool::new(manager).expect("Failed to create pool");
+        let mut postgres_config = Config::new();
+        postgres_config.host = Some(config.host.unwrap_or("127.0.0.1".to_string()));
+        postgres_config.port = Some(config.port.unwrap_or(5432));
+        postgres_config.dbname = Some(config.dbname.unwrap_or("postgres".to_string()));
+        postgres_config.user = Some(config.user.unwrap_or("postgres".to_string()));
+        postgres_config.password = Some(config.password.unwrap_or("postgres".to_string()));
+
+        if let Some(max_size) = config.pool_max_size {
+            postgres_config.pool = Some(PoolConfig::new(max_size));
+        }
+
+        let pool = postgres_config
+            .create_pool(Some(Runtime::Tokio1), NoTls)
+            .unwrap();
 
         Self { pool }
     }
 
-    pub fn conn(&self) -> Option<PooledConnection<PostgresConnectionManager<NoTls>>> {
-        self.pool.get().ok()
+    pub async fn conn(&self) -> Option<Object> {
+        self.pool.get().await.ok()
     }
 }

@@ -31,8 +31,9 @@ impl SqliteAccountsIndex {
     }
 }
 
+#[async_trait::async_trait]
 impl traits::AccountsIndex for SqliteAccountsIndex {
-    fn get_indexed_keys(
+    async fn get_indexed_keys(
         &self,
         index: &AccountIndex,
         index_key: &Pubkey,
@@ -67,7 +68,7 @@ impl traits::AccountsIndex for SqliteAccountsIndex {
         Ok(pubkeys)
     }
 
-    fn insert_index(
+    async fn insert_index(
         &self,
         index: &AccountIndex,
         index_key: &Pubkey,
@@ -94,7 +95,7 @@ impl traits::AccountsIndex for SqliteAccountsIndex {
         Ok(())
     }
 
-    fn create_index(&self) -> Result<(), Error> {
+    async fn create_index(&self) -> Result<(), Error> {
         let conn = self
             .db
             .conn
@@ -139,23 +140,27 @@ mod tests {
     use crate::db::sqlite::{Sqlite, SqliteConfig};
     use traits::AccountsIndex;
 
-    #[test]
-    fn test_get_indexed_keys() {
+    #[tokio::test]
+    async fn test_get_indexed_keys() {
         let db = Sqlite::open(Some(SqliteConfig::default())).unwrap();
         let accounts_index = SqliteAccountsIndex::create(Arc::new(db));
 
-        let result = accounts_index.create_index();
+        let result = accounts_index.create_index().await;
         assert!(result.is_ok());
 
         let index = AccountIndex::SplTokenOwner;
         let index_key = Pubkey::new_unique();
         let indexed_key = Pubkey::new_unique();
 
-        let result =
-            accounts_index.insert_index(&AccountIndex::SplTokenOwner, &index_key, &indexed_key);
+        let result = accounts_index
+            .insert_index(&AccountIndex::SplTokenOwner, &index_key, &indexed_key)
+            .await;
         assert!(result.is_ok());
 
-        let indexed_keys = accounts_index.get_indexed_keys(&index, &index_key).unwrap();
+        let indexed_keys = accounts_index
+            .get_indexed_keys(&index, &index_key)
+            .await
+            .unwrap();
         assert!(indexed_keys[0] == indexed_key);
     }
 }

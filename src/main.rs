@@ -44,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
         if let Some(config) = config.postgres {
             let db = Postgres::create_pool(config);
             let accounts_index = Arc::new(PostgresAccountsIndex::create(Arc::new(db)));
-            accounts_index.create_index().unwrap();
+            accounts_index.create_index().await.unwrap();
 
             create_rpc_module::<PostgresAccountsIndex>(client.clone(), accounts_index)
                 .map(Arc::new)
@@ -54,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
                 .map(Arc::new)
                 .expect("Failed to open sqlite database.");
             let accounts_index = Arc::new(SqliteAccountsIndex::create(db));
-            accounts_index.create_index().unwrap();
+            accounts_index.create_index().await.unwrap();
 
             create_rpc_module::<SqliteAccountsIndex>(client.clone(), accounts_index)
                 .map(Arc::new)

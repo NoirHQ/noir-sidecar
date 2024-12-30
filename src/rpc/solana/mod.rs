@@ -344,7 +344,9 @@ where
                 )
                 .await?
             } else {
-                let indexed_keys = self.get_indexed_keys(AccountIndex::ProgramId, &program_id)?;
+                let indexed_keys = self
+                    .get_indexed_keys(AccountIndex::ProgramId, &program_id)
+                    .await?;
 
                 self.get_filtered_program_accounts(
                     &program_id,
@@ -934,9 +936,14 @@ where
         }
     }
 
-    fn get_indexed_keys(&self, index: AccountIndex, index_key: &Pubkey) -> RpcResult<Vec<Pubkey>> {
+    async fn get_indexed_keys(
+        &self,
+        index: AccountIndex,
+        index_key: &Pubkey,
+    ) -> RpcResult<Vec<Pubkey>> {
         self.accounts_index
             .get_indexed_keys(&index, index_key)
+            .await
             .map_err(|e| {
                 tracing::error!("{:?}", e);
                 internal_error(Some(format!(
@@ -1166,7 +1173,9 @@ where
             owner_key.to_bytes().into(),
         )));
 
-        let indexed_keys = self.get_indexed_keys(AccountIndex::SplTokenOwner, owner_key)?;
+        let indexed_keys = self
+            .get_indexed_keys(AccountIndex::SplTokenOwner, owner_key)
+            .await?;
 
         self.get_filtered_program_accounts(program_id, indexed_keys, filters, sort_results, hash)
             .await
@@ -1193,7 +1202,9 @@ where
             mint_key.to_bytes().into(),
         )));
 
-        let indexed_keys = self.get_indexed_keys(AccountIndex::SplTokenMint, mint_key)?;
+        let indexed_keys = self
+            .get_indexed_keys(AccountIndex::SplTokenMint, mint_key)
+            .await?;
 
         self.get_filtered_program_accounts(program_id, indexed_keys, filters, sort_results, hash)
             .await

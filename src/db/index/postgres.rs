@@ -31,23 +31,26 @@ impl PostgresAccountsIndex {
     }
 }
 
+#[async_trait::async_trait]
 impl traits::AccountsIndex for PostgresAccountsIndex {
-    fn get_indexed_keys(
+    async fn get_indexed_keys(
         &self,
         index: &AccountIndex,
         index_key: &Pubkey,
     ) -> Result<Vec<Pubkey>, Error> {
         let index_name = get_index_name(index);
-        let mut conn = self.db.as_ref().conn().ok_or(Error::PoolError)?;
+        let conn = self.db.as_ref().conn().await.ok_or(Error::PoolError)?;
 
         let stmt = conn
             .prepare(
                 "SELECT indexed_key FROM accounts_index where index_name = $1 AND index_key = $2",
             )
+            .await
             .map_err(Error::PostgresError)?;
 
         let rows = conn
             .query(&stmt, &[&index_name, &index_key.to_string()])
+            .await
             .map_err(Error::PostgresError)?;
 
         let mut pubkeys = Vec::new();
@@ -60,19 +63,20 @@ impl traits::AccountsIndex for PostgresAccountsIndex {
         Ok(pubkeys)
     }
 
-    fn insert_index(
+    async fn insert_index(
         &self,
         index: &AccountIndex,
         index_key: &Pubkey,
         indexed_key: &Pubkey,
     ) -> Result<(), Error> {
         let index_name = get_index_name(index);
-        let mut conn = self.db.as_ref().conn().ok_or(Error::PoolError)?;
+        let conn = self.db.as_ref().conn().await.ok_or(Error::PoolError)?;
 
         let inserted = conn.execute(
                 "INSERT INTO accounts_index (index_name, index_key, indexed_key) VALUES (?1, ?2, ?3)",
                 &[&index_name, &index_key.to_string(), &indexed_key.to_string()],
             )
+            .await
             .map_err(Error::PostgresError)?;
         if inserted == 0 {
             return Err(Error::UnexpectedRowCount(inserted as usize));
@@ -80,15 +84,17 @@ impl traits::AccountsIndex for PostgresAccountsIndex {
         Ok(())
     }
 
-    fn create_index(&self) -> Result<(), Error> {
-        let mut conn = self.db.as_ref().conn().ok_or(Error::PoolError)?;
+    async fn create_index(&self) -> Result<(), Error> {
+        let conn = self.db.as_ref().conn().await.ok_or(Error::PoolError)?;
 
         let stmt = conn
             .prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name='accounts_index'")
+            .await
             .map_err(Error::PostgresError)?;
 
         if !conn
             .query(&stmt, &[])
+            .await
             .map_err(Error::PostgresError)?
             .is_empty()
         {
@@ -105,6 +111,7 @@ impl traits::AccountsIndex for PostgresAccountsIndex {
                     )",
                 &[],
             )
+            .await
             .map_err(Error::PostgresError)?;
 
         let _ = conn
@@ -112,6 +119,7 @@ impl traits::AccountsIndex for PostgresAccountsIndex {
                 "CREATE INDEX idx_accounts_index ON accounts_index (index_name, index_key)",
                 &[],
             )
+            .await
             .map_err(Error::PostgresError)?;
 
         Ok(())

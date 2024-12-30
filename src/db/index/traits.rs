@@ -19,19 +19,20 @@ use super::Error;
 use solana_accounts_db::accounts_index::AccountIndex;
 use solana_sdk::pubkey::Pubkey;
 
+#[async_trait::async_trait]
 pub trait AccountsIndex {
-    fn get_indexed_keys(
+    async fn get_indexed_keys(
         &self,
         index: &AccountIndex,
         index_key: &Pubkey,
     ) -> Result<Vec<Pubkey>, Error>;
 
-    fn insert_index(
+    async fn insert_index(
         &self,
         index: &AccountIndex,
         index_key: &Pubkey,
         indexed_key: &Pubkey,
     ) -> Result<(), Error>;
 
-    fn create_index(&self) -> Result<(), Error>;
+    async fn create_index(&self) -> Result<(), Error>;
 }
