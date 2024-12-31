@@ -347,7 +347,7 @@ where
                     .get_indexed_keys(AccountIndex::ProgramId, &program_id, sort_results)
                     .await?;
 
-                self.get_filtered_program_accounts(
+                self.get_filtered_indexed_accounts(
                     &program_id,
                     indexed_keys,
                     filters,
@@ -1124,7 +1124,7 @@ where
     }
 
     /// Use a set of filters to get an iterator of keyed program accounts from a bank
-    async fn get_filtered_program_accounts(
+    async fn get_filtered_indexed_accounts(
         &self,
         program_id: &Pubkey,
         indexed_keys: Vec<Pubkey>,
@@ -1177,7 +1177,7 @@ where
             .get_indexed_keys(AccountIndex::SplTokenOwner, owner_key, sort_results)
             .await?;
 
-        self.get_filtered_program_accounts(program_id, indexed_keys, filters, sort_results, hash)
+        self.get_filtered_indexed_accounts(program_id, indexed_keys, filters, sort_results, hash)
             .await
     }
 
@@ -1206,7 +1206,7 @@ where
             .get_indexed_keys(AccountIndex::SplTokenMint, mint_key, sort_results)
             .await?;
 
-        self.get_filtered_program_accounts(program_id, indexed_keys, filters, sort_results, hash)
+        self.get_filtered_indexed_accounts(program_id, indexed_keys, filters, sort_results, hash)
             .await
     }
 
