@@ -20,7 +20,10 @@ use super::{
     get_multiple_additional_mint_data, get_multiple_token_account_mint, optimize_filters,
     SolanaServer,
 };
-use crate::rpc::{invalid_params, solana::verify_pubkey};
+use crate::rpc::{
+    internal_error, invalid_params,
+    solana::{get_spl_token_mint_filter, get_spl_token_owner_filter, verify_filter, verify_pubkey},
+};
 use jsonrpsee::core::{async_trait, RpcResult};
 use solana_account_decoder::{
     encode_ui_account,
@@ -28,6 +31,7 @@ use solana_account_decoder::{
     parse_token::{get_token_account_mint, is_known_spl_token_id},
     UiAccount, UiAccountData, UiAccountEncoding, UiDataSliceConfig,
 };
+use solana_accounts_db::{accounts_index::AccountIndex, tiered_storage::index};
 use solana_inline_spl::token::{
     GenericTokenAccount, SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
 };
@@ -37,7 +41,7 @@ use solana_rpc_client_api::{
         RpcSendTransactionConfig, RpcSimulateTransactionConfig, RpcTokenAccountsFilter,
     },
     filter::{Memcmp, RpcFilterType},
-    request::{TokenAccountsFilter, MAX_MULTIPLE_ACCOUNTS},
+    request::{TokenAccountsFilter, MAX_GET_PROGRAM_ACCOUNT_FILTERS, MAX_MULTIPLE_ACCOUNTS},
     response::{
         OptionalContext, Response as RpcResponse, RpcBlockhash, RpcInflationReward,
         RpcKeyedAccount, RpcResponseContext, RpcSimulateTransactionResult,
@@ -54,6 +58,7 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub struct MockSolana {
     accounts: HashMap<Pubkey, Account>,
+    accounts_index: HashMap<(AccountIndex, Pubkey), Vec<Pubkey>>,
 }
 
 #[async_trait]
@@ -130,14 +135,94 @@ impl SolanaServer for MockSolana {
     async fn get_program_accounts(
         &self,
         program_id_str: String,
-        _config: Option<RpcProgramAccountsConfig>,
+        config: Option<RpcProgramAccountsConfig>,
     ) -> RpcResult<OptionalContext<Vec<RpcKeyedAccount>>> {
         tracing::debug!(
             "get_program_accounts rpc request received: {:?}",
             program_id_str
         );
+        let program_id = verify_pubkey(&program_id_str)?;
+        let (config, mut filters, with_context, sort_results) = if let Some(config) = config {
+            (
+                Some(config.account_config),
+                config.filters.unwrap_or_default(),
+                config.with_context.unwrap_or_default(),
+                config.sort_results.unwrap_or(true),
+            )
+        } else {
+            (None, vec![], false, true)
+        };
+        if filters.len() > MAX_GET_PROGRAM_ACCOUNT_FILTERS {
+            return Err(invalid_params(Some(format!(
+                "Too many filters provided; max {MAX_GET_PROGRAM_ACCOUNT_FILTERS}"
+            ))));
+        }
+        for filter in &filters {
+            verify_filter(filter)?;
+        }
 
-        Ok(OptionalContext::NoContext(Default::default()))
+        let RpcAccountInfoConfig {
+            encoding,
+            data_slice: data_slice_config,
+            commitment: _commitment,
+            min_context_slot: _min_context_slot,
+        } = config.unwrap_or_default();
+        let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
+        optimize_filters(&mut filters);
+
+        let keyed_accounts = {
+            if let Some(owner) = get_spl_token_owner_filter(&program_id, &filters) {
+                self.get_filtered_spl_token_accounts_by_owner(
+                    &program_id,
+                    &owner,
+                    filters,
+                    sort_results,
+                )
+                .await?
+            } else if let Some(mint) = get_spl_token_mint_filter(&program_id, &filters) {
+                self.get_filtered_spl_token_accounts_by_mint(
+                    &program_id,
+                    &mint,
+                    filters,
+                    sort_results,
+                )
+                .await?
+            } else {
+                let indexed_keys = self
+                    .get_indexed_keys(AccountIndex::ProgramId, &program_id, sort_results)
+                    .await?;
+
+                self.get_filtered_indexed_accounts(&program_id, indexed_keys, filters, sort_results)
+                    .await?
+            }
+        };
+
+        let accounts = if is_known_spl_token_id(&program_id)
+            && encoding == UiAccountEncoding::JsonParsed
+        {
+            self.get_parsed_token_keyed_accounts(&keyed_accounts)
+                .await?
+        } else {
+            keyed_accounts
+                .into_iter()
+                .map(|(pubkey, account)| {
+                    Ok(RpcKeyedAccount {
+                        pubkey: pubkey.to_string(),
+                        account: encode_account(&account, &pubkey, encoding, data_slice_config)?,
+                    })
+                })
+                .collect::<RpcResult<Vec<_>>>()?
+        };
+        Ok(match with_context {
+            true => OptionalContext::Context(RpcResponse {
+                context: RpcResponseContext {
+                    slot: Default::default(),
+                    api_version: Default::default(),
+                },
+                value: accounts,
+            }),
+            false => OptionalContext::NoContext(accounts),
+        })
     }
 
     async fn get_token_accounts_by_owner(
@@ -335,9 +420,17 @@ impl MockSolana {
         }
     }
 
-    fn get_program_accounts_by_id(&self, _program_id: &Pubkey) -> Vec<Pubkey> {
-        // TODO: Get accounts owned by program
-        Vec::new()
+    async fn get_indexed_keys(
+        &self,
+        index: AccountIndex,
+        index_key: &Pubkey,
+        _sort_results: bool,
+    ) -> RpcResult<Vec<Pubkey>> {
+        if let Some(indexed_keys) = self.accounts_index.get(&(index, *index_key)) {
+            Ok(indexed_keys.clone())
+        } else {
+            Ok(Vec::new())
+        }
     }
 
     pub async fn get_encoded_account(
@@ -462,25 +555,28 @@ impl MockSolana {
     }
 
     /// Use a set of filters to get an iterator of keyed program accounts from a bank
-    async fn get_filtered_program_accounts(
+    async fn get_filtered_indexed_accounts(
         &self,
         program_id: &Pubkey,
+        indexed_keys: Vec<Pubkey>,
         mut filters: Vec<RpcFilterType>,
         _sort_results: bool,
     ) -> RpcResult<Vec<(Pubkey, Account)>> {
         optimize_filters(&mut filters);
-
         let filter_closure = |account: &Account| {
             filters
                 .iter()
                 .all(|filter_type| filter_allows(filter_type, account))
         };
 
-        Ok(self
-            .accounts
-            .clone()
-            .into_iter()
-            .filter(|(_, account)| account.owner == *program_id && filter_closure(account))
+        Ok(indexed_keys
+            .iter()
+            .filter_map(|index_key| {
+                self.accounts
+                    .get(index_key)
+                    .filter(|account| account.owner == *program_id && filter_closure(account))
+                    .map(|account| (*index_key, account.clone()))
+            })
             .collect())
     }
 
@@ -504,8 +600,11 @@ impl MockSolana {
             owner_key.to_bytes().into(),
         )));
 
-        // TODO: Handle account index
-        self.get_filtered_program_accounts(program_id, filters, sort_results)
+        let indexed_keys = self
+            .get_indexed_keys(AccountIndex::SplTokenOwner, owner_key, sort_results)
+            .await?;
+
+        self.get_filtered_indexed_accounts(program_id, indexed_keys, filters, sort_results)
             .await
     }
 
@@ -529,8 +628,11 @@ impl MockSolana {
             mint_key.to_bytes().into(),
         )));
 
-        // TODO: Handle account index
-        self.get_filtered_program_accounts(program_id, filters, sort_results)
+        let indexed_keys = self
+            .get_indexed_keys(AccountIndex::SplTokenMint, mint_key, sort_results)
+            .await?;
+
+        self.get_filtered_indexed_accounts(program_id, indexed_keys, filters, sort_results)
             .await
     }
 
