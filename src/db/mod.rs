@@ -15,11 +15,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod cli;
-pub mod client;
-pub mod config;
-pub mod db;
-pub mod logger;
-pub mod router;
-pub mod rpc;
-pub mod server;
+pub mod index;
+pub mod postgres;
+pub mod sqlite;

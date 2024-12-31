@@ -15,7 +15,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use noir_sidecar::{client::Client, rpc::create_rpc_module};
+use noir_sidecar::{
+    client::Client,
+    db::{
+        index::{
+            postgres::PostgresAccountsIndex, sqlite::SqliteAccountsIndex, traits::AccountsIndex,
+        },
+        postgres::Postgres,
+        sqlite::Sqlite,
+    },
+    rpc::create_rpc_module,
+};
 use std::sync::Arc;
 
 #[tokio::main]
@@ -29,9 +39,28 @@ async fn main() -> anyhow::Result<()> {
 
     let (tx, rx) = tokio::sync::mpsc::channel(100);
     let client = Arc::new(Client::new(config.client, tx.clone()));
-    let module = create_rpc_module(client.clone())
-        .map(Arc::new)
-        .expect("failed to create jsonrpc handler.");
+
+    let module = {
+        if let Some(config) = config.postgres {
+            let db = Postgres::create_pool(config);
+            let accounts_index = Arc::new(PostgresAccountsIndex::create(Arc::new(db)));
+            accounts_index.create_index().await.unwrap();
+
+            create_rpc_module::<PostgresAccountsIndex>(client.clone(), accounts_index)
+                .map(Arc::new)
+                .expect("Failed to create jsonrpc handler.")
+        } else {
+            let db = Sqlite::open(config.sqlite)
+                .map(Arc::new)
+                .expect("Failed to open sqlite database.");
+            let accounts_index = Arc::new(SqliteAccountsIndex::create(db));
+            accounts_index.create_index().await.unwrap();
+
+            create_rpc_module::<SqliteAccountsIndex>(client.clone(), accounts_index)
+                .map(Arc::new)
+                .expect("Failed to create jsonrpc handler.")
+        }
+    };
 
     let server = noir_sidecar::server::SidecarServer::new(config.server);
 

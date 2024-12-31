@@ -17,7 +17,7 @@
 
 pub mod solana;
 
-use crate::client::Client;
+use crate::{client::Client, db::index::traits};
 use axum::{extract::State, http::StatusCode, Json};
 use jsonrpsee::{
     core::{params::ArrayParams, ClientError},
@@ -30,10 +30,16 @@ use serde_json::Value;
 use solana::{Solana, SolanaServer};
 use std::sync::Arc;
 
-pub fn create_rpc_module(client: Arc<Client>) -> Result<RpcModule<()>, anyhow::Error> {
+pub fn create_rpc_module<I>(
+    client: Arc<Client>,
+    accounts_index: Arc<I>,
+) -> Result<RpcModule<()>, anyhow::Error>
+where
+    I: 'static + Sync + Send + traits::AccountsIndex,
+{
     let mut module = RpcModule::new(());
 
-    module.merge(Solana::new(client.clone()).into_rpc())?;
+    module.merge(Solana::new(client.clone(), accounts_index).into_rpc())?;
 
     Ok(module)
 }

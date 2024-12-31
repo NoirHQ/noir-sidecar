@@ -15,11 +15,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod cli;
-pub mod client;
-pub mod config;
-pub mod db;
-pub mod logger;
-pub mod router;
-pub mod rpc;
-pub mod server;
+use super::Error;
+use solana_accounts_db::accounts_index::AccountIndex;
+use solana_sdk::pubkey::Pubkey;
+
+#[async_trait::async_trait]
+pub trait AccountsIndex {
+    async fn get_indexed_keys(
+        &self,
+        index: &AccountIndex,
+        index_key: &Pubkey,
+        sort_results: bool,
+    ) -> Result<Vec<Pubkey>, Error>;
+
+    async fn insert_index(
+        &self,
+        index: &AccountIndex,
+        index_key: &Pubkey,
+        indexed_key: &Pubkey,
+    ) -> Result<(), Error>;
+
+    async fn create_index(&self) -> Result<(), Error>;
+}

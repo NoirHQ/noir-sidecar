@@ -15,11 +15,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod cli;
-pub mod client;
-pub mod config;
-pub mod db;
-pub mod logger;
-pub mod router;
-pub mod rpc;
-pub mod server;
+use rusqlite::{Connection, Error};
+use serde::Deserialize;
+use std::sync::{Arc, Mutex};
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SqliteConfig {
+    path: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct Sqlite {
+    pub conn: Arc<Mutex<Connection>>,
+}
+
+impl Sqlite {
+    pub fn open(config: Option<SqliteConfig>) -> Result<Self, Error> {
+        let config = config.unwrap_or_default();
+
+        let conn = match config.path {
+            Some(path) => Connection::open(path),
+            None => Connection::open_in_memory(),
+        }
+        .map(Mutex::new)
+        .map(Arc::new)?;
+
+        Ok(Self { conn })
+    }
+}
