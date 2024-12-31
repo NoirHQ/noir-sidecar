@@ -21,7 +21,7 @@ use super::{
     SolanaServer,
 };
 use crate::rpc::{
-    internal_error, invalid_params,
+    invalid_params,
     solana::{
         get_spl_token_mint_filter, get_spl_token_owner_filter, verify_filter, verify_pubkey,
         verify_token_account_filter,
@@ -34,7 +34,7 @@ use solana_account_decoder::{
     parse_token::{get_token_account_mint, is_known_spl_token_id},
     UiAccount, UiAccountData, UiAccountEncoding, UiDataSliceConfig,
 };
-use solana_accounts_db::{accounts_index::AccountIndex, tiered_storage::index};
+use solana_accounts_db::accounts_index::AccountIndex;
 use solana_inline_spl::token::{
     GenericTokenAccount, SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET,
 };
@@ -396,8 +396,8 @@ impl SolanaServer for MockSolana {
 
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: 0,
-                api_version: None,
+                slot: Default::default(),
+                api_version: Default::default(),
             },
             value: balance,
         })
@@ -406,7 +406,7 @@ impl SolanaServer for MockSolana {
     async fn get_genesis_hash(&self) -> RpcResult<String> {
         tracing::debug!("get_genesis_hash rpc request received");
 
-        Ok(Default::default())
+        Ok(bs58::encode(&[0u8; 32]).into_string())
     }
 
     async fn get_epoch_info(&self, _config: Option<RpcContextConfig>) -> RpcResult<EpochInfo> {

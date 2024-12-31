@@ -17,7 +17,7 @@
 
 #![allow(clippy::type_complexity)]
 
-// #[cfg(feature = "mock")]
+#[cfg(feature = "mock")]
 pub mod mock;
 
 use super::invalid_request;
@@ -486,8 +486,8 @@ where
         // TODO: Complete rpc response context
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: 0,
-                api_version: None,
+                slot: Default::default(),
+                api_version: Default::default(),
             },
             value: RpcBlockhash {
                 blockhash: bs58::encode(hash.as_bytes()).into_string(),
@@ -780,8 +780,8 @@ where
 
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: 0,
-                api_version: None,
+                slot: Default::default(),
+                api_version: Default::default(),
             },
             value: balance,
         })
