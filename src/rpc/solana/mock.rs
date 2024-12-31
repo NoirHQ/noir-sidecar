@@ -353,7 +353,10 @@ impl SolanaServer for MockSolana {
             address_strs.len()
         );
 
-        Ok(Default::default())
+        Ok(address_strs
+            .into_iter()
+            .map(|_| None)
+            .collect::<Vec<Option<RpcInflationReward>>>())
     }
 
     async fn get_fee_for_message(
@@ -375,16 +378,28 @@ impl SolanaServer for MockSolana {
     async fn get_balance(
         &self,
         pubkey_str: String,
-        _config: Option<RpcContextConfig>,
+        config: Option<RpcContextConfig>,
     ) -> RpcResult<RpcResponse<u64>> {
         tracing::debug!("get_balance rpc request received: {:?}", pubkey_str);
 
+        let RpcContextConfig {
+            commitment: _commitment,
+            min_context_slot: _min_context_slot,
+        } = config.unwrap_or_default();
+        let pubkey = verify_pubkey(&pubkey_str)?;
+
+        let balance = self
+            .accounts
+            .get(&pubkey)
+            .map(|account| account.lamports)
+            .unwrap_or_default();
+
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: Default::default(),
-                api_version: Default::default(),
+                slot: 0,
+                api_version: None,
             },
-            value: Default::default(),
+            value: balance,
         })
     }
 
