@@ -37,7 +37,7 @@ use solana_rpc_client_api::{
         RpcSendTransactionConfig, RpcSimulateTransactionConfig, RpcTokenAccountsFilter,
     },
     filter::{Memcmp, RpcFilterType},
-    request::TokenAccountsFilter,
+    request::{TokenAccountsFilter, MAX_MULTIPLE_ACCOUNTS},
     response::{
         OptionalContext, Response as RpcResponse, RpcBlockhash, RpcInflationReward,
         RpcKeyedAccount, RpcResponseContext, RpcSimulateTransactionResult,
@@ -88,19 +88,42 @@ impl SolanaServer for MockSolana {
     async fn get_multiple_accounts(
         &self,
         pubkey_strs: Vec<String>,
-        _config: Option<RpcAccountInfoConfig>,
+        config: Option<RpcAccountInfoConfig>,
     ) -> RpcResult<RpcResponse<Vec<Option<UiAccount>>>> {
         tracing::debug!(
             "get_multiple_accounts rpc request received: {:?}",
             pubkey_strs.len()
         );
 
+        if pubkey_strs.len() > MAX_MULTIPLE_ACCOUNTS {
+            return Err(invalid_params(Some(format!(
+                "Too many inputs provided; max {MAX_MULTIPLE_ACCOUNTS}"
+            ))));
+        }
+        let pubkeys = pubkey_strs
+            .iter()
+            .map(|pubkey| verify_pubkey(pubkey))
+            .collect::<Result<Vec<Pubkey>, _>>()
+            .map_err(|e| invalid_params(Some(e.to_string())))?;
+
+        let RpcAccountInfoConfig {
+            encoding,
+            data_slice: data_slice_config,
+            commitment: _commitment,
+            min_context_slot: _min_context_slot,
+        } = config.unwrap_or_default();
+        let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
+
+        let response = self
+            .get_encoded_accounts(&pubkeys, encoding, data_slice_config, None)
+            .await?;
+
         Ok(RpcResponse {
             context: RpcResponseContext {
                 slot: Default::default(),
                 api_version: Default::default(),
             },
-            value: Default::default(),
+            value: response,
         })
     }
 
@@ -340,16 +363,22 @@ impl MockSolana {
 
     pub async fn get_encoded_accounts(
         &self,
-        pubkeys: &Vec<Pubkey>,
+        pubkeys: &[Pubkey],
         encoding: UiAccountEncoding,
         data_slice: Option<UiDataSliceConfig>,
+        // only used for simulation results
+        overwrite_accounts: Option<&HashMap<Pubkey, Account>>,
     ) -> RpcResult<Vec<Option<UiAccount>>> {
-        let accounts = self.get_accounts(pubkeys).await?;
+        let accounts = self
+            .get_accounts_from_overwrites_or_node(pubkeys, overwrite_accounts)
+            .await?;
 
         if encoding == UiAccountEncoding::JsonParsed {
             let (spl_tokens, non_spl_tokens) = filter_known_spl_tokens(accounts.clone());
 
-            let spl_token_ui_accounts = self.get_parsed_token_accounts(&spl_tokens).await?;
+            let spl_token_ui_accounts = self
+                .get_parsed_token_accounts(&spl_tokens, overwrite_accounts)
+                .await?;
             let non_spl_token_ui_accounts = non_spl_tokens
                 .into_iter()
                 .map(|(pubkey, account)| match account {
@@ -508,10 +537,14 @@ impl MockSolana {
     pub async fn get_parsed_token_accounts(
         &self,
         keyed_accounts: &[(Pubkey, Account)],
+        overwrite_accounts: Option<&HashMap<Pubkey, Account>>,
     ) -> RpcResult<HashMap<Pubkey, UiAccount>> {
         let mint_pubkeys = get_multiple_token_account_mint(keyed_accounts);
         let mint_accounts: HashMap<Pubkey, Account> = self
-            .get_accounts(&mint_pubkeys.values().cloned().collect::<Vec<Pubkey>>())
+            .get_accounts_from_overwrites_or_node(
+                &mint_pubkeys.values().cloned().collect::<Vec<Pubkey>>(),
+                overwrite_accounts,
+            )
             .await?
             .into_iter()
             .filter_map(|(mint_pubkey, mint_account)| {
@@ -548,7 +581,7 @@ impl MockSolana {
         keyed_accounts: &[(Pubkey, Account)],
     ) -> RpcResult<Vec<RpcKeyedAccount>> {
         Ok(self
-            .get_parsed_token_accounts(keyed_accounts)
+            .get_parsed_token_accounts(keyed_accounts, None)
             .await?
             .into_iter()
             .filter_map(
@@ -560,6 +593,42 @@ impl MockSolana {
                     _ => None,
                 },
             )
+            .collect())
+    }
+
+    async fn get_accounts_from_overwrites_or_node(
+        &self,
+        pubkeys: &[Pubkey],
+        overwrite_accounts: Option<&HashMap<Pubkey, Account>>,
+    ) -> RpcResult<Vec<(Pubkey, Option<Account>)>> {
+        let mut accounts_from_overwrite = HashMap::new();
+        let mut pubkeys_not_in_overwrite = Vec::new();
+
+        for pubkey in pubkeys.iter() {
+            if let Some(account) =
+                overwrite_accounts.and_then(|overwrite_accounts| overwrite_accounts.get(pubkey))
+            {
+                accounts_from_overwrite.insert(*pubkey, account.clone());
+            } else {
+                pubkeys_not_in_overwrite.push(*pubkey);
+            }
+        }
+
+        let accounts_from_node: HashMap<Pubkey, Option<Account>> = self
+            .get_accounts(&pubkeys_not_in_overwrite)
+            .await?
+            .into_iter()
+            .collect();
+
+        Ok(pubkeys
+            .iter()
+            .map(|pubkey| {
+                let account = accounts_from_overwrite
+                    .get(pubkey)
+                    .cloned()
+                    .or_else(|| accounts_from_node.get(pubkey).cloned().flatten());
+                (*pubkey, account)
+            })
             .collect())
     }
 }
