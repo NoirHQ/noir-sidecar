@@ -22,7 +22,10 @@ use super::{
 };
 use crate::rpc::{
     internal_error, invalid_params,
-    solana::{get_spl_token_mint_filter, get_spl_token_owner_filter, verify_filter, verify_pubkey},
+    solana::{
+        get_spl_token_mint_filter, get_spl_token_owner_filter, verify_filter, verify_pubkey,
+        verify_token_account_filter,
+    },
 };
 use jsonrpsee::core::{async_trait, RpcResult};
 use solana_account_decoder::{
@@ -228,20 +231,61 @@ impl SolanaServer for MockSolana {
     async fn get_token_accounts_by_owner(
         &self,
         owner_str: String,
-        _token_account_filter: RpcTokenAccountsFilter,
-        _config: Option<RpcAccountInfoConfig>,
+        token_account_filter: RpcTokenAccountsFilter,
+        config: Option<RpcAccountInfoConfig>,
     ) -> RpcResult<RpcResponse<Vec<RpcKeyedAccount>>> {
         tracing::debug!(
             "get_token_accounts_by_owner rpc request received: {:?}",
             owner_str
         );
 
+        let owner = verify_pubkey(&owner_str)?;
+        let token_account_filter = verify_token_account_filter(token_account_filter)?;
+
+        let RpcAccountInfoConfig {
+            encoding,
+            data_slice: data_slice_config,
+            commitment: _commitment,
+            min_context_slot: _min_context_slot,
+        } = config.unwrap_or_default();
+        let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
+        let (token_program_id, mint) = self
+            .get_token_program_id_and_mint(token_account_filter)
+            .await?;
+
+        let mut filters = vec![];
+        if let Some(mint) = mint {
+            // Optional filter on Mint address
+            filters.push(RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
+                0,
+                mint.to_bytes().into(),
+            )));
+        }
+
+        let keyed_accounts = self
+            .get_filtered_spl_token_accounts_by_owner(&token_program_id, &owner, filters, true)
+            .await?;
+        let accounts = if encoding == UiAccountEncoding::JsonParsed {
+            self.get_parsed_token_keyed_accounts(&keyed_accounts)
+                .await?
+        } else {
+            keyed_accounts
+                .into_iter()
+                .map(|(pubkey, account)| {
+                    Ok(RpcKeyedAccount {
+                        pubkey: pubkey.to_string(),
+                        account: encode_account(&account, &pubkey, encoding, data_slice_config)?,
+                    })
+                })
+                .collect::<RpcResult<Vec<_>>>()?
+        };
+
         Ok(RpcResponse {
             context: RpcResponseContext {
                 slot: Default::default(),
                 api_version: Default::default(),
             },
-            value: Default::default(),
+            value: accounts,
         })
     }
 
