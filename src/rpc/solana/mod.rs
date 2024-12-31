@@ -267,7 +267,7 @@ where
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
 
         let response = self
-            .get_encoded_accounts(&pubkeys, encoding, data_slice_config, hash)
+            .get_encoded_accounts(&pubkeys, encoding, data_slice_config, hash, None)
             .await?;
 
         Ok(RpcResponse {
@@ -642,7 +642,7 @@ where
             } else {
                 let mut post_simulation_accounts_map = HashMap::new();
                 for (pubkey, data) in post_simulation_accounts {
-                    post_simulation_accounts_map.insert(pubkey, data);
+                    post_simulation_accounts_map.insert(pubkey, data.into());
                 }
 
                 let pubkeys = config_accounts
@@ -653,8 +653,14 @@ where
                     .map_err(|e| invalid_params(Some(e.to_string())))?;
 
                 Some(
-                    self.get_encoded_accounts(&pubkeys, accounts_encoding, None, hash)
-                        .await?,
+                    self.get_encoded_accounts(
+                        &pubkeys,
+                        accounts_encoding,
+                        None,
+                        hash,
+                        Some(&post_simulation_accounts_map),
+                    )
+                    .await?,
                 )
             }
         } else {
@@ -977,17 +983,23 @@ where
 
     pub async fn get_encoded_accounts(
         &self,
-        pubkeys: &Vec<Pubkey>,
+        pubkeys: &[Pubkey],
         encoding: UiAccountEncoding,
         data_slice: Option<UiDataSliceConfig>,
         hash: Hash,
+        // only used for simulation results
+        overwrite_accounts: Option<&HashMap<Pubkey, Account>>,
     ) -> RpcResult<Vec<Option<UiAccount>>> {
-        let accounts = self.get_accounts(pubkeys, hash).await?;
+        let accounts = self
+            .get_accounts_from_overwrites_or_node(pubkeys, overwrite_accounts, hash)
+            .await?;
 
         if encoding == UiAccountEncoding::JsonParsed {
             let (spl_tokens, non_spl_tokens) = filter_known_spl_tokens(accounts.clone());
 
-            let spl_token_ui_accounts = self.get_parsed_token_accounts(&spl_tokens, hash).await?;
+            let spl_token_ui_accounts = self
+                .get_parsed_token_accounts(&spl_tokens, hash, overwrite_accounts)
+                .await?;
             let non_spl_token_ui_accounts = non_spl_tokens
                 .into_iter()
                 .map(|(pubkey, account)| match account {
@@ -1214,11 +1226,13 @@ where
         &self,
         keyed_accounts: &[(Pubkey, Account)],
         hash: Hash,
+        overwrite_accounts: Option<&HashMap<Pubkey, Account>>,
     ) -> RpcResult<HashMap<Pubkey, UiAccount>> {
         let mint_pubkeys = get_multiple_token_account_mint(keyed_accounts);
         let mint_accounts: HashMap<Pubkey, Account> = self
-            .get_accounts(
+            .get_accounts_from_overwrites_or_node(
                 &mint_pubkeys.values().cloned().collect::<Vec<Pubkey>>(),
+                overwrite_accounts,
                 hash,
             )
             .await?
@@ -1258,7 +1272,7 @@ where
         hash: Hash,
     ) -> RpcResult<Vec<RpcKeyedAccount>> {
         Ok(self
-            .get_parsed_token_accounts(keyed_accounts, hash)
+            .get_parsed_token_accounts(keyed_accounts, hash, None)
             .await?
             .into_iter()
             .filter_map(
@@ -1298,6 +1312,43 @@ where
             .request("author_submitExtrinsic", rpc_params!(transaction))
             .await
             .map_err(|e| invalid_request(Some(e.to_string())))
+    }
+
+    async fn get_accounts_from_overwrites_or_node(
+        &self,
+        pubkeys: &[Pubkey],
+        overwrite_accounts: Option<&HashMap<Pubkey, Account>>,
+        hash: Hash,
+    ) -> RpcResult<Vec<(Pubkey, Option<Account>)>> {
+        let mut accounts_from_overwrite = HashMap::new();
+        let mut pubkeys_not_in_overwrite = Vec::new();
+
+        for pubkey in pubkeys.iter() {
+            if let Some(account) =
+                overwrite_accounts.and_then(|overwrite_accounts| overwrite_accounts.get(pubkey))
+            {
+                accounts_from_overwrite.insert(*pubkey, account.clone());
+            } else {
+                pubkeys_not_in_overwrite.push(*pubkey);
+            }
+        }
+
+        let accounts_from_node: HashMap<Pubkey, Option<Account>> = self
+            .get_accounts(&pubkeys_not_in_overwrite, hash)
+            .await?
+            .into_iter()
+            .collect();
+
+        Ok(pubkeys
+            .iter()
+            .map(|pubkey| {
+                let account = accounts_from_overwrite
+                    .get(pubkey)
+                    .cloned()
+                    .or_else(|| accounts_from_node.get(pubkey).cloned().flatten());
+                (*pubkey, account)
+            })
+            .collect())
     }
 }
 
