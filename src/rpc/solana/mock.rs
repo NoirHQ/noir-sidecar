@@ -47,7 +47,7 @@ use solana_rpc_client_api::{
     request::{TokenAccountsFilter, MAX_GET_PROGRAM_ACCOUNT_FILTERS, MAX_MULTIPLE_ACCOUNTS},
     response::{
         OptionalContext, Response as RpcResponse, RpcBlockhash, RpcInflationReward,
-        RpcKeyedAccount, RpcResponseContext, RpcSimulateTransactionResult,
+        RpcKeyedAccount, RpcResponseContext, RpcSimulateTransactionResult, RpcVersionInfo,
     },
 };
 use solana_sdk::{
@@ -122,16 +122,28 @@ impl SolanaServer for MockSolana {
         } = config.unwrap_or_default();
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
 
-        let response = self
-            .get_encoded_accounts(&pubkeys, encoding, data_slice_config, None)
-            .await?;
+        let (_, slot) = get_mock_hash_and_slot();
+
+        let account = Account {
+            lamports: 1000000000,
+            data: Vec::new(),
+            owner: pubkeys[0],
+            executable: false,
+            rent_epoch: Default::default(),
+        };
+        let ui_account =
+            encode_ui_account(&pubkeys[0], &account, encoding, None, data_slice_config);
+
+        // let response = self
+        //     .get_encoded_accounts(&pubkeys, encoding, data_slice_config, None)
+        //     .await?;
 
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: Default::default(),
+                slot,
                 api_version: Default::default(),
             },
-            value: response,
+            value: vec![Some(ui_account)],
         })
     }
 
@@ -388,18 +400,18 @@ impl SolanaServer for MockSolana {
         } = config.unwrap_or_default();
         let pubkey = verify_pubkey(&pubkey_str)?;
 
-        let balance = self
-            .accounts
-            .get(&pubkey)
-            .map(|account| account.lamports)
-            .unwrap_or_default();
+        // let balance = self
+        //     .accounts
+        //     .get(&pubkey)
+        //     .map(|account| account.lamports)
+        //     .unwrap_or_default();
 
         Ok(RpcResponse {
             context: RpcResponseContext {
                 slot: Default::default(),
                 api_version: Default::default(),
             },
-            value: balance,
+            value: 1000000000,
         })
     }
 
@@ -426,6 +438,14 @@ impl SolanaServer for MockSolana {
         tracing::debug!("get_transaction_count rpc request received");
 
         Ok(Default::default())
+    }
+
+    async fn get_version(&self) -> RpcResult<RpcVersionInfo> {
+        tracing::debug!("get_version rpc request received");
+        Ok(RpcVersionInfo {
+            solana_core: "2.0.18".to_string(),
+            feature_set: Some(607245837),
+        })
     }
 }
 
