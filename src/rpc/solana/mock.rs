@@ -40,31 +40,31 @@ use solana_inline_spl::token::{
 };
 use solana_rpc_client_api::{
     config::{
-        RpcAccountInfoConfig, RpcContextConfig, RpcEpochConfig, RpcProgramAccountsConfig,
-        RpcRequestAirdropConfig, RpcSendTransactionConfig, RpcSimulateTransactionConfig,
-        RpcTokenAccountsFilter,
+        RpcAccountInfoConfig, RpcContextConfig, RpcGetVoteAccountsConfig, RpcProgramAccountsConfig,
+        RpcRequestAirdropConfig, RpcSendTransactionConfig, RpcSignaturesForAddressConfig,
+        RpcSimulateTransactionConfig, RpcTokenAccountsFilter,
     },
     filter::{Memcmp, RpcFilterType},
     request::{TokenAccountsFilter, MAX_GET_PROGRAM_ACCOUNT_FILTERS, MAX_MULTIPLE_ACCOUNTS},
     response::{
-        OptionalContext, Response as RpcResponse, RpcBlockhash, RpcInflationReward,
-        RpcKeyedAccount, RpcResponseContext, RpcSimulateTransactionResult, RpcVersionInfo,
+        OptionalContext, Response as RpcResponse, RpcBlockhash,
+        RpcConfirmedTransactionStatusWithSignature, RpcKeyedAccount, RpcResponseContext,
+        RpcSimulateTransactionResult, RpcVersionInfo, RpcVoteAccountStatus,
     },
 };
 use solana_sdk::{
     account::{Account, ReadableAccount},
     clock::UnixTimestamp,
-    epoch_info::EpochInfo,
     pubkey::Pubkey,
     signature::Signature,
     system_program,
 };
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 #[derive(Default)]
 pub struct MockSolana {
-    accounts: Arc<Mutex<HashMap<Pubkey, Account>>>,
+    accounts: Arc<RwLock<HashMap<Pubkey, Account>>>,
     accounts_index: HashMap<(AccountIndex, Pubkey), Vec<Pubkey>>,
 }
 
@@ -349,21 +349,21 @@ impl SolanaServer for MockSolana {
         })
     }
 
-    async fn get_inflation_reward(
-        &self,
-        address_strs: Vec<String>,
-        _config: Option<RpcEpochConfig>,
-    ) -> RpcResult<Vec<Option<RpcInflationReward>>> {
-        tracing::debug!(
-            "get_inflation_reward rpc request received: {:?}",
-            address_strs.len()
-        );
+    // async fn get_inflation_reward(
+    //     &self,
+    //     address_strs: Vec<String>,
+    //     _config: Option<RpcEpochConfig>,
+    // ) -> RpcResult<Vec<Option<RpcInflationReward>>> {
+    //     tracing::debug!(
+    //         "get_inflation_reward rpc request received: {:?}",
+    //         address_strs.len()
+    //     );
 
-        Ok(address_strs
-            .into_iter()
-            .map(|_| None)
-            .collect::<Vec<Option<RpcInflationReward>>>())
-    }
+    //     Ok(address_strs
+    //         .into_iter()
+    //         .map(|_| None)
+    //         .collect::<Vec<Option<RpcInflationReward>>>())
+    // }
 
     async fn get_fee_for_message(
         &self,
@@ -395,7 +395,7 @@ impl SolanaServer for MockSolana {
         } = config.unwrap_or_default();
         let pubkey = verify_pubkey(&pubkey_str)?;
 
-        let accounts = self.accounts.lock().await;
+        let accounts = self.accounts.read().await;
 
         let balance = accounts
             .get(&pubkey)
@@ -417,24 +417,24 @@ impl SolanaServer for MockSolana {
         Ok(bs58::encode(&[0u8; 32]).into_string())
     }
 
-    async fn get_epoch_info(&self, _config: Option<RpcContextConfig>) -> RpcResult<EpochInfo> {
-        tracing::debug!("get_epoch_info rpc request received");
+    // async fn get_epoch_info(&self, _config: Option<RpcContextConfig>) -> RpcResult<EpochInfo> {
+    //     tracing::debug!("get_epoch_info rpc request received");
 
-        Ok(EpochInfo {
-            epoch: Default::default(),
-            slot_index: Default::default(),
-            slots_in_epoch: Default::default(),
-            absolute_slot: Default::default(),
-            block_height: Default::default(),
-            transaction_count: Default::default(),
-        })
-    }
+    //     Ok(EpochInfo {
+    //         epoch: Default::default(),
+    //         slot_index: Default::default(),
+    //         slots_in_epoch: Default::default(),
+    //         absolute_slot: Default::default(),
+    //         block_height: Default::default(),
+    //         transaction_count: Default::default(),
+    //     })
+    // }
 
-    async fn get_transaction_count(&self, _config: Option<RpcContextConfig>) -> RpcResult<u64> {
-        tracing::debug!("get_transaction_count rpc request received");
+    // async fn get_transaction_count(&self, _config: Option<RpcContextConfig>) -> RpcResult<u64> {
+    //     tracing::debug!("get_transaction_count rpc request received");
 
-        Ok(Default::default())
-    }
+    //     Ok(Default::default())
+    // }
 
     async fn get_version(&self) -> RpcResult<RpcVersionInfo> {
         tracing::debug!("get_version rpc request received");
@@ -460,7 +460,7 @@ impl SolanaServer for MockSolana {
 
         let pubkey = verify_pubkey(&pubkey_str)?;
 
-        let mut accounts = self.accounts.lock().await;
+        let mut accounts = self.accounts.write().await;
         accounts.insert(
             pubkey,
             Account {
@@ -473,6 +473,31 @@ impl SolanaServer for MockSolana {
         );
 
         Ok(Signature::new_unique().to_string())
+    }
+
+    async fn get_signatures_for_address(
+        &self,
+        address: String,
+        _config: Option<RpcSignaturesForAddressConfig>,
+    ) -> RpcResult<Vec<RpcConfirmedTransactionStatusWithSignature>> {
+        tracing::debug!(
+            "get_signatures_for_address rpc request received: {:?}",
+            address
+        );
+
+        Ok(Vec::new())
+    }
+
+    async fn get_vote_accounts(
+        &self,
+        _config: Option<RpcGetVoteAccountsConfig>,
+    ) -> RpcResult<RpcVoteAccountStatus> {
+        tracing::debug!("get_vote_accounts rpc request received");
+
+        Ok(RpcVoteAccountStatus {
+            current: Default::default(),
+            delinquent: Default::default(),
+        })
     }
 }
 
@@ -643,7 +668,7 @@ impl MockSolana {
     }
 
     pub async fn get_account(&self, pubkey: &Pubkey) -> RpcResult<Option<Account>> {
-        let accounts = self.accounts.lock().await;
+        let accounts = self.accounts.read().await;
 
         Ok(accounts.get(pubkey).cloned())
     }
@@ -652,7 +677,7 @@ impl MockSolana {
         &self,
         pubkeys: &[Pubkey],
     ) -> RpcResult<Vec<(Pubkey, Option<Account>)>> {
-        let accounts = self.accounts.lock().await;
+        let accounts = self.accounts.read().await;
 
         Ok(pubkeys
             .iter()
@@ -679,7 +704,7 @@ impl MockSolana {
                 .all(|filter_type| filter_allows(filter_type, account))
         };
 
-        let accounts = self.accounts.lock().await;
+        let accounts = self.accounts.read().await;
 
         Ok(indexed_keys
             .iter()
