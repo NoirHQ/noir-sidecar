@@ -21,10 +21,10 @@ use super::{
     SolanaServer,
 };
 use crate::rpc::{
-    invalid_params,
+    invalid_params, invalid_request,
     solana::{
-        get_spl_token_mint_filter, get_spl_token_owner_filter, verify_filter, verify_pubkey,
-        verify_token_account_filter,
+        decode_and_deserialize, get_spl_token_mint_filter, get_spl_token_owner_filter,
+        verify_filter, verify_pubkey, verify_signature, verify_token_account_filter,
     },
 };
 use jsonrpsee::core::{async_trait, RpcResult};
@@ -41,11 +41,14 @@ use solana_inline_spl::token::{
 use solana_rpc_client_api::{
     config::{
         RpcAccountInfoConfig, RpcContextConfig, RpcGetVoteAccountsConfig, RpcProgramAccountsConfig,
-        RpcRequestAirdropConfig, RpcSendTransactionConfig, RpcSignaturesForAddressConfig,
-        RpcSimulateTransactionConfig, RpcTokenAccountsFilter,
+        RpcRequestAirdropConfig, RpcSendTransactionConfig, RpcSignatureStatusConfig,
+        RpcSignaturesForAddressConfig, RpcSimulateTransactionConfig, RpcTokenAccountsFilter,
     },
     filter::{Memcmp, RpcFilterType},
-    request::{TokenAccountsFilter, MAX_GET_PROGRAM_ACCOUNT_FILTERS, MAX_MULTIPLE_ACCOUNTS},
+    request::{
+        TokenAccountsFilter, MAX_GET_PROGRAM_ACCOUNT_FILTERS,
+        MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS, MAX_MULTIPLE_ACCOUNTS,
+    },
     response::{
         OptionalContext, Response as RpcResponse, RpcBlockhash,
         RpcConfirmedTransactionStatusWithSignature, RpcKeyedAccount, RpcResponseContext,
@@ -58,6 +61,10 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Signature,
     system_program,
+    transaction::VersionedTransaction,
+};
+use solana_transaction_status::{
+    TransactionConfirmationStatus, TransactionStatus, UiTransactionEncoding,
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
@@ -66,6 +73,7 @@ use tokio::sync::RwLock;
 pub struct MockSolana {
     accounts: Arc<RwLock<HashMap<Pubkey, Account>>>,
     accounts_index: HashMap<(AccountIndex, Pubkey), Vec<Pubkey>>,
+    transaction_statuses: Arc<RwLock<HashMap<Signature, TransactionStatus>>>,
 }
 
 #[async_trait]
@@ -317,12 +325,50 @@ impl SolanaServer for MockSolana {
 
     async fn send_transaction(
         &self,
-        _data: String,
-        _config: Option<RpcSendTransactionConfig>,
+        data: String,
+        config: Option<RpcSendTransactionConfig>,
     ) -> RpcResult<String> {
         tracing::debug!("send_transaction rpc request received");
 
-        Ok(Default::default())
+        let RpcSendTransactionConfig {
+            skip_preflight: _skip_preflight,
+            preflight_commitment: _preflight_commitment,
+            encoding,
+            max_retries: _max_retries,
+            min_context_slot: _min_context_slot,
+        } = config.unwrap_or_default();
+        let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base58);
+        let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
+            invalid_params(Some(format!(
+                "unsupported encoding: {tx_encoding}. Supported encodings: base58, base64"
+            )))
+        })?;
+
+        let (_wire_transaction, unsanitized_tx) =
+            decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
+        tracing::debug!("{:#?}", unsanitized_tx);
+
+        let signature = unsanitized_tx
+            .signatures
+            .first()
+            .cloned()
+            .ok_or(invalid_request(Some("Signature empty".to_string())))?;
+
+        let mut transaction_statuses = self.transaction_statuses.write().await;
+        let (_, slot) = get_mock_hash_and_slot();
+
+        transaction_statuses.insert(
+            signature,
+            TransactionStatus {
+                slot,
+                confirmations: None,
+                status: Ok(()),
+                err: None,
+                confirmation_status: Some(TransactionConfirmationStatus::Finalized),
+            },
+        );
+
+        Ok(signature.to_string())
     }
 
     async fn simulate_transaction(
@@ -497,6 +543,42 @@ impl SolanaServer for MockSolana {
         Ok(RpcVoteAccountStatus {
             current: Default::default(),
             delinquent: Default::default(),
+        })
+    }
+
+    async fn get_signature_statuses(
+        &self,
+        signature_strs: Vec<String>,
+        _config: Option<RpcSignatureStatusConfig>,
+    ) -> RpcResult<RpcResponse<Vec<Option<TransactionStatus>>>> {
+        tracing::debug!(
+            "get_signature_statuses rpc request received: {:?}",
+            signature_strs.len()
+        );
+        if signature_strs.len() > MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS {
+            return Err(invalid_params(Some(format!(
+                "Too many inputs provided; max {MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS}"
+            ))));
+        }
+        let mut signatures: Vec<Signature> = vec![];
+        for signature_str in signature_strs {
+            signatures.push(verify_signature(&signature_str)?);
+        }
+
+        let transaction_statuses = self.transaction_statuses.read().await;
+        let mut statuses: Vec<Option<TransactionStatus>> = vec![];
+        for signature in signatures {
+            statuses.push(transaction_statuses.get(&signature).cloned());
+        }
+
+        let (blockhash, slot) = get_mock_hash_and_slot();
+
+        Ok(RpcResponse {
+            context: RpcResponseContext {
+                slot,
+                api_version: Default::default(),
+            },
+            value: statuses,
         })
     }
 }
