@@ -1,6 +1,6 @@
 [server]
 listen_address = "127.0.0.1"
-port = 8080
+port = 8899
 cors = "all"
 request_timeout_seconds = 120
 

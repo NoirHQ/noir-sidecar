@@ -27,7 +27,11 @@ use jsonrpsee::{
 use noir_core_primitives::Hash;
 use parity_scale_codec::{Decode, Encode};
 use serde_json::Value;
-use solana::{Solana, SolanaServer};
+#[cfg(feature = "mock")]
+use solana::mock::MockSolana;
+#[cfg(not(feature = "mock"))]
+use solana::Solana;
+use solana::SolanaServer;
 use std::sync::Arc;
 
 pub fn create_rpc_module<I>(
@@ -39,6 +43,9 @@ where
 {
     let mut module = RpcModule::new(());
 
+    #[cfg(feature = "mock")]
+    module.merge(MockSolana::default().into_rpc())?;
+    #[cfg(not(feature = "mock"))]
     module.merge(Solana::new(client.clone(), accounts_index).into_rpc())?;
 
     Ok(module)

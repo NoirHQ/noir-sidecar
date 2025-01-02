@@ -17,6 +17,7 @@
 
 #![allow(clippy::type_complexity)]
 
+#[cfg(feature = "mock")]
 pub mod mock;
 
 use super::invalid_request;
@@ -44,16 +45,22 @@ use solana_inline_spl::{
     token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
     token_2022::{self, ACCOUNTTYPE_ACCOUNT},
 };
+use solana_rpc_client_api::config::{
+    RpcGetVoteAccountsConfig, RpcRequestAirdropConfig, RpcSignaturesForAddressConfig,
+};
+use solana_rpc_client_api::response::{
+    RpcConfirmedTransactionStatusWithSignature, RpcVersionInfo, RpcVoteAccountStatus,
+};
 use solana_rpc_client_api::{
     config::{
-        RpcAccountInfoConfig, RpcContextConfig, RpcEpochConfig, RpcProgramAccountsConfig,
-        RpcSendTransactionConfig, RpcSimulateTransactionConfig, RpcTokenAccountsFilter,
+        RpcAccountInfoConfig, RpcContextConfig, RpcProgramAccountsConfig, RpcSendTransactionConfig,
+        RpcSimulateTransactionConfig, RpcTokenAccountsFilter,
     },
     filter::{Memcmp, RpcFilterType},
     request::{TokenAccountsFilter, MAX_GET_PROGRAM_ACCOUNT_FILTERS, MAX_MULTIPLE_ACCOUNTS},
     response::{
-        OptionalContext, Response as RpcResponse, RpcBlockhash, RpcInflationReward,
-        RpcKeyedAccount, RpcResponseContext, RpcSimulateTransactionResult,
+        OptionalContext, Response as RpcResponse, RpcBlockhash, RpcKeyedAccount,
+        RpcResponseContext, RpcSimulateTransactionResult,
     },
 };
 use solana_runtime_api::error::Error;
@@ -61,7 +68,6 @@ use solana_sdk::{
     account::{Account, ReadableAccount},
     clock::UnixTimestamp,
     commitment_config::{CommitmentConfig, CommitmentLevel},
-    epoch_info::EpochInfo,
     inner_instruction::InnerInstructions,
     message::{v0::LoadedAddresses, AccountKeys, VersionedMessage},
     packet::PACKET_DATA_SIZE,
@@ -146,12 +152,12 @@ pub trait Solana {
         config: Option<RpcSimulateTransactionConfig>,
     ) -> RpcResult<RpcResponse<RpcSimulateTransactionResult>>;
 
-    #[method(name = "getInflationReward")]
-    async fn get_inflation_reward(
-        &self,
-        address_strs: Vec<String>,
-        config: Option<RpcEpochConfig>,
-    ) -> RpcResult<Vec<Option<RpcInflationReward>>>;
+    // #[method(name = "getInflationReward")]
+    // async fn get_inflation_reward(
+    //     &self,
+    //     address_strs: Vec<String>,
+    //     config: Option<RpcEpochConfig>,
+    // ) -> RpcResult<Vec<Option<RpcInflationReward>>>;
 
     #[method(name = "getFeeForMessage")]
     async fn get_fee_for_message(
@@ -170,11 +176,35 @@ pub trait Solana {
     #[method(name = "getGenesisHash")]
     async fn get_genesis_hash(&self) -> RpcResult<String>;
 
-    #[method(name = "getEpochInfo")]
-    async fn get_epoch_info(&self, config: Option<RpcContextConfig>) -> RpcResult<EpochInfo>;
+    // #[method(name = "getEpochInfo")]
+    // async fn get_epoch_info(&self, config: Option<RpcContextConfig>) -> RpcResult<EpochInfo>;
 
-    #[method(name = "getTransactionCount")]
-    async fn get_transaction_count(&self, config: Option<RpcContextConfig>) -> RpcResult<u64>;
+    // #[method(name = "getTransactionCount")]
+    // async fn get_transaction_count(&self, config: Option<RpcContextConfig>) -> RpcResult<u64>;
+
+    #[method(name = "getVersion")]
+    async fn get_version(&self) -> RpcResult<RpcVersionInfo>;
+
+    #[method(name = "requestAirdrop")]
+    async fn request_airdrop(
+        &self,
+        pubkey_str: String,
+        lamports: u64,
+        config: Option<RpcRequestAirdropConfig>,
+    ) -> RpcResult<String>;
+
+    #[method(name = "getSignaturesForAddress")]
+    async fn get_signatures_for_address(
+        &self,
+        address: String,
+        config: Option<RpcSignaturesForAddressConfig>,
+    ) -> RpcResult<Vec<RpcConfirmedTransactionStatusWithSignature>>;
+
+    #[method(name = "getVoteAccounts")]
+    async fn get_vote_accounts(
+        &self,
+        config: Option<RpcGetVoteAccountsConfig>,
+    ) -> RpcResult<RpcVoteAccountStatus>;
 }
 
 #[derive(Clone)]
@@ -485,8 +515,8 @@ where
         // TODO: Complete rpc response context
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: 0,
-                api_version: None,
+                slot: Default::default(),
+                api_version: Default::default(),
             },
             value: RpcBlockhash {
                 blockhash: bs58::encode(hash.as_bytes()).into_string(),
@@ -690,21 +720,21 @@ where
         })
     }
 
-    async fn get_inflation_reward(
-        &self,
-        address_strs: Vec<String>,
-        _config: Option<RpcEpochConfig>,
-    ) -> RpcResult<Vec<Option<RpcInflationReward>>> {
-        tracing::debug!(
-            "get_inflation_reward rpc request received: {:?}",
-            address_strs.len()
-        );
+    // async fn get_inflation_reward(
+    //     &self,
+    //     address_strs: Vec<String>,
+    //     _config: Option<RpcEpochConfig>,
+    // ) -> RpcResult<Vec<Option<RpcInflationReward>>> {
+    //     tracing::debug!(
+    //         "get_inflation_reward rpc request received: {:?}",
+    //         address_strs.len()
+    //     );
 
-        Ok(address_strs
-            .into_iter()
-            .map(|_| None)
-            .collect::<Vec<Option<RpcInflationReward>>>())
-    }
+    //     Ok(address_strs
+    //         .into_iter()
+    //         .map(|_| None)
+    //         .collect::<Vec<Option<RpcInflationReward>>>())
+    // }
 
     async fn get_fee_for_message(
         &self,
@@ -779,8 +809,8 @@ where
 
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: 0,
-                api_version: None,
+                slot: Default::default(),
+                api_version: Default::default(),
             },
             value: balance,
         })
@@ -798,53 +828,105 @@ where
         Ok(bs58::encode(hash.as_bytes()).into_string())
     }
 
-    async fn get_epoch_info(&self, config: Option<RpcContextConfig>) -> RpcResult<EpochInfo> {
-        tracing::debug!("get_epoch_info rpc request received");
+    // async fn get_epoch_info(&self, config: Option<RpcContextConfig>) -> RpcResult<EpochInfo> {
+    //     tracing::debug!("get_epoch_info rpc request received");
 
-        let method = "getEpochInfo".to_string();
-        let params = serde_json::to_vec(&config).map_err(|e| parse_error(Some(e.to_string())))?;
+    //     let method = "getEpochInfo".to_string();
+    //     let params = serde_json::to_vec(&config).map_err(|e| parse_error(Some(e.to_string())))?;
 
-        let response = state_call::<_, Result<Vec<u8>, Error>>(
-            &self.client,
-            "SolanaRuntimeApi_call",
-            (method, params),
-            None,
-        )
-        .await
-        .map_err(|e| internal_error(Some(e.to_string())))?
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+    //     let response = state_call::<_, Result<Vec<u8>, Error>>(
+    //         &self.client,
+    //         "SolanaRuntimeApi_call",
+    //         (method, params),
+    //         None,
+    //     )
+    //     .await
+    //     .map_err(|e| internal_error(Some(e.to_string())))?
+    //     .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
+    //     serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
+    // }
+
+    // async fn get_transaction_count(&self, config: Option<RpcContextConfig>) -> RpcResult<u64> {
+    //     tracing::debug!("get_transaction_count rpc request received");
+
+    //     let RpcContextConfig {
+    //         commitment,
+    //         min_context_slot,
+    //     } = config.unwrap_or_default();
+    //     let hash = self
+    //         .get_hash_with_config(RpcContextConfig {
+    //             commitment,
+    //             min_context_slot,
+    //         })
+    //         .await?;
+
+    //     let method = "getTransactionCount".to_string();
+    //     let params = serde_json::to_vec("").map_err(|e| parse_error(Some(e.to_string())))?;
+
+    //     let response = state_call::<_, Result<Vec<u8>, Error>>(
+    //         &self.client,
+    //         "SolanaRuntimeApi_call",
+    //         (method, params),
+    //         Some(hash),
+    //     )
+    //     .await
+    //     .map_err(|e| internal_error(Some(e.to_string())))?
+    //     .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+    //     serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
+    // }
+
+    async fn get_version(&self) -> RpcResult<RpcVersionInfo> {
+        tracing::debug!("get_version rpc request received");
+
+        // TODO: Get solana_core version and feature_set from node
+        Ok(RpcVersionInfo {
+            solana_core: "2.0.18".to_string(),
+            feature_set: Some(607245837),
+        })
     }
 
-    async fn get_transaction_count(&self, config: Option<RpcContextConfig>) -> RpcResult<u64> {
-        tracing::debug!("get_transaction_count rpc request received");
+    async fn request_airdrop(
+        &self,
+        pubkey_str: String,
+        lamports: u64,
+        config: Option<RpcRequestAirdropConfig>,
+    ) -> RpcResult<String> {
+        tracing::debug!("request_airdrop rpc request received");
+        tracing::trace!(
+            "request_airdrop id={} lamports={} config: {:?}",
+            pubkey_str,
+            lamports,
+            &config
+        );
 
-        let RpcContextConfig {
-            commitment,
-            min_context_slot,
-        } = config.unwrap_or_default();
-        let hash = self
-            .get_hash_with_config(RpcContextConfig {
-                commitment,
-                min_context_slot,
-            })
-            .await?;
+        Err(invalid_request(Some("Unsupported method".to_string())))
+    }
 
-        let method = "getTransactionCount".to_string();
-        let params = serde_json::to_vec("").map_err(|e| parse_error(Some(e.to_string())))?;
+    async fn get_signatures_for_address(
+        &self,
+        address: String,
+        _config: Option<RpcSignaturesForAddressConfig>,
+    ) -> RpcResult<Vec<RpcConfirmedTransactionStatusWithSignature>> {
+        tracing::debug!(
+            "get_signatures_for_address rpc request received: {:?}",
+            address
+        );
 
-        let response = state_call::<_, Result<Vec<u8>, Error>>(
-            &self.client,
-            "SolanaRuntimeApi_call",
-            (method, params),
-            Some(hash),
-        )
-        .await
-        .map_err(|e| internal_error(Some(e.to_string())))?
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+        Ok(Vec::new())
+    }
 
-        serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
+    async fn get_vote_accounts(
+        &self,
+        _config: Option<RpcGetVoteAccountsConfig>,
+    ) -> RpcResult<RpcVoteAccountStatus> {
+        tracing::debug!("get_vote_accounts rpc request received");
+
+        Ok(RpcVoteAccountStatus {
+            current: Default::default(),
+            delinquent: Default::default(),
+        })
     }
 }
 
