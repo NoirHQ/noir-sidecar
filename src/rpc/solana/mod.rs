@@ -46,8 +46,10 @@ use solana_inline_spl::{
     token_2022::{self, ACCOUNTTYPE_ACCOUNT},
 };
 use solana_rpc_client_api::config::{
-    RpcGetVoteAccountsConfig, RpcRequestAirdropConfig, RpcSignaturesForAddressConfig,
+    RpcGetVoteAccountsConfig, RpcRequestAirdropConfig, RpcSignatureStatusConfig,
+    RpcSignaturesForAddressConfig,
 };
+use solana_rpc_client_api::request::MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS;
 use solana_rpc_client_api::response::{
     RpcConfirmedTransactionStatusWithSignature, RpcVersionInfo, RpcVoteAccountStatus,
 };
@@ -64,6 +66,7 @@ use solana_rpc_client_api::{
     },
 };
 use solana_runtime_api::error::Error;
+use solana_sdk::signature::Signature;
 use solana_sdk::{
     account::{Account, ReadableAccount},
     clock::UnixTimestamp,
@@ -78,7 +81,7 @@ use solana_sdk::{
 };
 use solana_transaction_status::{
     map_inner_instructions, parse_ui_inner_instructions, TransactionBinaryEncoding,
-    UiTransactionEncoding,
+    TransactionStatus, UiTransactionEncoding,
 };
 use spl_token_2022::{
     extension::{
@@ -205,6 +208,13 @@ pub trait Solana {
         &self,
         config: Option<RpcGetVoteAccountsConfig>,
     ) -> RpcResult<RpcVoteAccountStatus>;
+
+    #[method(name = "getSignatureStatuses")]
+    async fn get_signature_statuses(
+        &self,
+        signature_strs: Vec<String>,
+        config: Option<RpcSignatureStatusConfig>,
+    ) -> RpcResult<RpcResponse<Vec<Option<TransactionStatus>>>>;
 }
 
 #[derive(Clone)]
@@ -928,6 +938,40 @@ where
             delinquent: Default::default(),
         })
     }
+
+    async fn get_signature_statuses(
+        &self,
+        signature_strs: Vec<String>,
+        _config: Option<RpcSignatureStatusConfig>,
+    ) -> RpcResult<RpcResponse<Vec<Option<TransactionStatus>>>> {
+        tracing::debug!(
+            "get_signature_statuses rpc request received: {:?}",
+            signature_strs.len()
+        );
+        if signature_strs.len() > MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS {
+            return Err(invalid_params(Some(format!(
+                "Too many inputs provided; max {MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS}"
+            ))));
+        }
+        let mut signatures: Vec<Signature> = vec![];
+        for signature_str in signature_strs {
+            signatures.push(verify_signature(&signature_str)?);
+        }
+
+        let mut statuses: Vec<Option<TransactionStatus>> = vec![];
+        for signature in signatures {
+            let status = self.get_transaction_status(&signature).await?;
+            statuses.push(status);
+        }
+
+        Ok(RpcResponse {
+            context: RpcResponseContext {
+                slot: Default::default(),
+                api_version: Default::default(),
+            },
+            value: statuses,
+        })
+    }
 }
 
 impl<I> Solana<I>
@@ -1432,6 +1476,14 @@ where
             })
             .collect())
     }
+
+    async fn get_transaction_status(
+        &self,
+        _signature: &Signature,
+    ) -> RpcResult<Option<TransactionStatus>> {
+        // TODO: Return status
+        Ok(None)
+    }
 }
 
 fn optimize_filters(filters: &mut [RpcFilterType]) {
@@ -1453,6 +1505,10 @@ fn verify_filter(input: &RpcFilterType) -> RpcResult<()> {
 
 pub fn verify_pubkey(pubkey: &str) -> RpcResult<Pubkey> {
     Pubkey::from_str(pubkey).map_err(|e| invalid_params(Some(format!("Invalid param: {e:?}"))))
+}
+
+fn verify_signature(input: &str) -> RpcResult<Signature> {
+    Signature::from_str(input).map_err(|e| invalid_params(Some(format!("Invalid param: {e:?}"))))
 }
 
 fn verify_token_account_filter(
