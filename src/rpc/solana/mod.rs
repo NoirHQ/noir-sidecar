@@ -45,6 +45,7 @@ use solana_inline_spl::{
     token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
     token_2022::{self, ACCOUNTTYPE_ACCOUNT},
 };
+use solana_rpc_client_api::config::RpcRequestAirdropConfig;
 use solana_rpc_client_api::response::RpcVersionInfo;
 use solana_rpc_client_api::{
     config::{
@@ -180,6 +181,14 @@ pub trait Solana {
 
     #[method(name = "getVersion")]
     async fn get_version(&self) -> RpcResult<RpcVersionInfo>;
+
+    #[method(name = "requestAirdrop")]
+    async fn request_airdrop(
+        &self,
+        pubkey_str: String,
+        lamports: u64,
+        config: Option<RpcRequestAirdropConfig>,
+    ) -> RpcResult<String>;
 }
 
 #[derive(Clone)]
@@ -854,10 +863,29 @@ where
 
     async fn get_version(&self) -> RpcResult<RpcVersionInfo> {
         tracing::debug!("get_version rpc request received");
+
+        // TODO: Get solana_core version and feature_set from node
         Ok(RpcVersionInfo {
             solana_core: "2.0.18".to_string(),
             feature_set: Some(607245837),
         })
+    }
+
+    async fn request_airdrop(
+        &self,
+        pubkey_str: String,
+        lamports: u64,
+        config: Option<RpcRequestAirdropConfig>,
+    ) -> RpcResult<String> {
+        tracing::debug!("request_airdrop rpc request received");
+        tracing::trace!(
+            "request_airdrop id={} lamports={} config: {:?}",
+            pubkey_str,
+            lamports,
+            &config
+        );
+
+        Err(invalid_request(Some("Unsupported method".to_string())))
     }
 }
 
