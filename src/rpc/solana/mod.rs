@@ -66,6 +66,7 @@ use solana_rpc_client_api::{
     },
 };
 use solana_runtime_api::error::Error;
+use solana_sdk::clock::Slot;
 use solana_sdk::signature::Signature;
 use solana_sdk::{
     account::{Account, ReadableAccount},
@@ -257,6 +258,7 @@ where
                 min_context_slot,
             })
             .await?;
+        let slot = self.get_slot(hash).await?;
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
 
         let response = self
@@ -264,7 +266,7 @@ where
             .await?;
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: Default::default(),
+                slot,
                 api_version: Default::default(),
             },
             value: response,
@@ -304,6 +306,7 @@ where
                 min_context_slot,
             })
             .await?;
+        let slot = self.get_slot(hash).await?;
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
 
         let response = self
@@ -312,7 +315,7 @@ where
 
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: Default::default(),
+                slot,
                 api_version: Default::default(),
             },
             value: response,
@@ -360,6 +363,7 @@ where
                 min_context_slot,
             })
             .await?;
+        let slot = self.get_slot(hash).await?;
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
         optimize_filters(&mut filters);
 
@@ -417,7 +421,7 @@ where
         Ok(match with_context {
             true => OptionalContext::Context(RpcResponse {
                 context: RpcResponseContext {
-                    slot: Default::default(),
+                    slot,
                     api_version: Default::default(),
                 },
                 value: accounts,
@@ -452,6 +456,7 @@ where
                 min_context_slot,
             })
             .await?;
+        let slot = self.get_slot(hash).await?;
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
         let (token_program_id, mint) = self
             .get_token_program_id_and_mint(token_account_filter, hash)
@@ -492,7 +497,7 @@ where
 
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: Default::default(),
+                slot,
                 api_version: Default::default(),
             },
             value: accounts,
@@ -515,6 +520,7 @@ where
                 min_context_slot,
             })
             .await?;
+        let slot = self.get_slot(hash).await?;
 
         let Header { number, .. } = self
             .client
@@ -525,7 +531,7 @@ where
         // TODO: Complete rpc response context
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: Default::default(),
+                slot,
                 api_version: Default::default(),
             },
             value: RpcBlockhash {
@@ -596,6 +602,7 @@ where
                 min_context_slot,
             })
             .await?;
+        let slot = self.get_slot(hash).await?;
         let mut blockhash: Option<RpcBlockhash> = None;
         if replace_recent_blockhash {
             if sig_verify {
@@ -715,7 +722,7 @@ where
 
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: Default::default(),
+                slot,
                 api_version: Default::default(),
             },
             value: RpcSimulateTransactionResult {
@@ -757,6 +764,7 @@ where
         let hash = self
             .get_hash_with_config(config.unwrap_or_default())
             .await?;
+        let slot = self.get_slot(hash).await?;
 
         let method = "getFeeForMessage".to_string();
         let params = serde_json::to_vec(&message).map_err(|e| parse_error(Some(e.to_string())))?;
@@ -775,7 +783,7 @@ where
             .map_err(|e| internal_error(Some(e.to_string())))?;
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: Default::default(),
+                slot,
                 api_version: Default::default(),
             },
             value: fee,
@@ -800,6 +808,7 @@ where
                 min_context_slot,
             })
             .await?;
+        let slot = self.get_slot(hash).await?;
 
         let method = "getBalance".to_string();
         let params = serde_json::to_vec(&pubkey).map_err(|e| parse_error(Some(e.to_string())))?;
@@ -819,7 +828,7 @@ where
 
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: Default::default(),
+                slot,
                 api_version: Default::default(),
             },
             value: balance,
@@ -957,6 +966,13 @@ where
         for signature_str in signature_strs {
             signatures.push(verify_signature(&signature_str)?);
         }
+        let hash = self
+            .get_hash_with_config(RpcContextConfig {
+                commitment: Some(CommitmentConfig::processed()),
+                min_context_slot: None,
+            })
+            .await?;
+        let slot = self.get_slot(hash).await?;
 
         let mut statuses: Vec<Option<TransactionStatus>> = vec![];
         for signature in signatures {
@@ -966,7 +982,7 @@ where
 
         Ok(RpcResponse {
             context: RpcResponseContext {
-                slot: Default::default(),
+                slot,
                 api_version: Default::default(),
             },
             value: statuses,
@@ -1240,6 +1256,7 @@ where
     }
 
     pub async fn get_timestamp(&self, hash: Hash) -> RpcResult<UnixTimestamp> {
+        // twox128("Timestamp") + twox128("Now")
         let timestamp_key = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
 
         let mut params = ArrayParams::new();
@@ -1259,6 +1276,29 @@ where
         let response = hex::decode(response).map_err(|e| internal_error(Some(e.to_string())))?;
 
         Ok(u64::from_le_bytes(response.try_into().unwrap()) as i64)
+    }
+
+    pub async fn get_slot(&self, hash: Hash) -> RpcResult<Slot> {
+        // twox128("Solana") + twox128("Slot")
+        let slot_key = "0xe4ad0d288d0ccf2a73473d025d07cea4ec862ddb18bc3dcede937c1cc93b0aae";
+
+        let mut params = ArrayParams::new();
+        params.insert(slot_key).unwrap();
+        params.insert(hash).unwrap();
+
+        let mut response: String = self
+            .client
+            .request::<Option<String>>("state_getStorage", params)
+            .await
+            .map_err(|e| internal_error(Some(e.to_string())))?
+            .ok_or(internal_error(Some("Solana slot not exist".to_string())))?;
+
+        if response.starts_with("0x") {
+            response = response.strip_prefix("0x").map(|s| s.to_string()).unwrap();
+        }
+        let response = hex::decode(response).map_err(|e| internal_error(Some(e.to_string())))?;
+
+        Ok(u64::from_le_bytes(response.try_into().unwrap()))
     }
 
     /// Use a set of filters to get an iterator of keyed program accounts from a bank
