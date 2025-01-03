@@ -92,6 +92,11 @@ use spl_token_2022::{
 };
 use std::{any::type_name, cmp::min, collections::HashMap, str::FromStr, sync::Arc};
 
+// twox128("Timestamp") + twox128("Now")
+const TIMESTAMP_KEY: &str = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
+// twox128("Solana") + twox128("Slot")
+const SLOT_KEY: &str = "0xe4ad0d288d0ccf2a73473d025d07cea4ec862ddb18bc3dcede937c1cc93b0aae";
+
 pub type TransactionLogMessages = Vec<String>;
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -1256,11 +1261,8 @@ where
     }
 
     pub async fn get_timestamp(&self, hash: Hash) -> RpcResult<UnixTimestamp> {
-        // twox128("Timestamp") + twox128("Now")
-        let timestamp_key = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
-
         let mut params = ArrayParams::new();
-        params.insert(timestamp_key).unwrap();
+        params.insert(TIMESTAMP_KEY).unwrap();
         params.insert(hash).unwrap();
 
         let mut response: String = self
@@ -1279,11 +1281,8 @@ where
     }
 
     pub async fn get_slot(&self, hash: Hash) -> RpcResult<Slot> {
-        // twox128("Solana") + twox128("Slot")
-        let slot_key = "0xe4ad0d288d0ccf2a73473d025d07cea4ec862ddb18bc3dcede937c1cc93b0aae";
-
         let mut params = ArrayParams::new();
-        params.insert(slot_key).unwrap();
+        params.insert(SLOT_KEY).unwrap();
         params.insert(hash).unwrap();
 
         let mut response: String = self
