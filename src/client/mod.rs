@@ -55,6 +55,7 @@ pub struct Request {
     pub retry: u8,
 }
 
+#[derive(Debug)]
 pub enum Message {
     Request(Request),
     TryConnect,
@@ -118,6 +119,8 @@ impl Client {
         tokio::spawn(async move {
             loop {
                 if let Some(message) = rx.recv().await {
+                    tracing::debug!("{:#?}", message);
+                    
                     match message {
                         Message::Request(Request {
                             method,
