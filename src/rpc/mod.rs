@@ -17,7 +17,9 @@
 
 pub mod solana;
 
-use crate::{client::Client, db::index::traits};
+use crate::client::Client;
+#[cfg(not(feature = "mock"))]
+use crate::db::index::traits;
 use axum::{extract::State, http::StatusCode, Json};
 use jsonrpsee::{
     core::{params::ArrayParams, ClientError},
@@ -28,12 +30,15 @@ use noir_core_primitives::Hash;
 use parity_scale_codec::{Decode, Encode};
 use serde_json::Value;
 #[cfg(feature = "mock")]
-use solana::mock::MockSolana;
+use solana::mock::{svm::SvmRequest, MockSolana};
 #[cfg(not(feature = "mock"))]
 use solana::Solana;
 use solana::SolanaServer;
 use std::sync::Arc;
+#[cfg(feature = "mock")]
+use tokio::sync::mpsc::UnboundedSender;
 
+#[cfg(not(feature = "mock"))]
 pub fn create_rpc_module<I>(
     client: Arc<Client>,
     accounts_index: Arc<I>,
@@ -43,10 +48,16 @@ where
 {
     let mut module = RpcModule::new(());
 
-    #[cfg(feature = "mock")]
-    module.merge(MockSolana::default().into_rpc())?;
-    #[cfg(not(feature = "mock"))]
     module.merge(Solana::new(client.clone(), accounts_index).into_rpc())?;
+
+    Ok(module)
+}
+
+#[cfg(feature = "mock")]
+pub fn create_rpc_module(svm: UnboundedSender<SvmRequest>) -> Result<RpcModule<()>, anyhow::Error> {
+    let mut module = RpcModule::new(());
+
+    module.merge(MockSolana::new(svm).into_rpc())?;
 
     Ok(module)
 }

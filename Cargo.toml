@@ -28,6 +28,7 @@ clap = { version = "4.5.23", features = ["derive"] }
 deadpool-postgres = "0.14.1"
 hex = "0.4.3"
 jsonrpsee = { version = "0.24.7", features = ["full"] }
+litesvm = { version = "0.4.0", features = ["serde"] }
 noir-core-primitives = { git = "https://github.com/NoirHQ/noir", rev = "4c5ea4d68b0fe76af6a298ec63145b1b4d423cc1" }
 parity-scale-codec = { version = "3.6.12", features = ["derive"] }
 rusqlite = { version = "0.32.1", features = ["bundled"] }

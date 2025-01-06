@@ -24,7 +24,7 @@ use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{
-        mpsc::{Receiver, Sender},
+        mpsc::{UnboundedReceiver, UnboundedSender},
         oneshot,
     },
     task::JoinHandle,
@@ -42,7 +42,7 @@ pub struct ClientConfig {
 #[derive(Clone)]
 pub struct Client {
     config: ClientConfig,
-    tx: Sender<Message>,
+    tx: UnboundedSender<Message>,
 }
 
 pub type Response = Result<Value, ClientError>;
@@ -62,7 +62,7 @@ pub enum Message {
 }
 
 impl Client {
-    pub fn new(config: ClientConfig, tx: Sender<Message>) -> Self {
+    pub fn new(config: ClientConfig, tx: UnboundedSender<Message>) -> Self {
         Self { config, tx }
     }
 
@@ -79,7 +79,6 @@ impl Client {
                 response: res_tx,
                 retry: 3,
             }))
-            .await
             .map_err(|e| ClientError::Custom(e.to_string()))?;
 
         let response = res_rx
@@ -112,12 +111,20 @@ impl Client {
         Ok(client)
     }
 
-    pub async fn run(&self, tx: Sender<Message>, mut rx: Receiver<Message>) -> JoinHandle<()> {
+    pub async fn run(
+        &self,
+        tx: UnboundedSender<Message>,
+        mut rx: UnboundedReceiver<Message>,
+    ) -> JoinHandle<()> {
         let mut client: Option<Arc<WsClient>> = None;
         let config = self.config.clone();
 
         tokio::spawn(async move {
             loop {
+                if tokio::signal::ctrl_c().await.is_ok() {
+                    break;
+                }
+
                 if let Some(message) = rx.recv().await {
                     tracing::debug!("{:#?}", message);
                     
@@ -133,30 +140,26 @@ impl Client {
                                     .send(Err(ClientError::Custom("request failed".to_string())));
                             } else if let Some(client) = client.as_ref() {
                                 if !client.is_connected() {
-                                    let _ = tx.send(Message::TryConnect).await;
-                                    let _ = tx
-                                        .send(Message::Request(Request {
-                                            method,
-                                            params,
-                                            response: res_tx,
-                                            retry: retry.saturating_sub(1),
-                                        }))
-                                        .await;
+                                    let _ = tx.send(Message::TryConnect);
+                                    let _ = tx.send(Message::Request(Request {
+                                        method,
+                                        params,
+                                        response: res_tx,
+                                        retry: retry.saturating_sub(1),
+                                    }));
                                 } else {
                                     let response =
                                         client.request::<Value, ArrayParams>(&method, params).await;
                                     res_tx.send(response).unwrap();
                                 }
                             } else {
-                                let _ = tx.send(Message::TryConnect).await;
-                                let _ = tx
-                                    .send(Message::Request(Request {
-                                        method,
-                                        params,
-                                        response: res_tx,
-                                        retry: retry.saturating_sub(1),
-                                    }))
-                                    .await;
+                                let _ = tx.send(Message::TryConnect);
+                                let _ = tx.send(Message::Request(Request {
+                                    method,
+                                    params,
+                                    response: res_tx,
+                                    retry: retry.saturating_sub(1),
+                                }));
                             }
                         }
                         Message::TryConnect => {
