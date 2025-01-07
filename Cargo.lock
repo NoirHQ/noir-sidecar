@@ -3437,6 +3437,7 @@ dependencies = [
  "serde_json",
  "solana-account-decoder",
  "solana-accounts-db",
+ "solana-fee",
  "solana-inline-spl",
  "solana-rpc-client-api",
  "solana-runtime-api",

@@ -23,7 +23,7 @@ use super::{
     SolanaServer,
 };
 use crate::rpc::{
-    internal_error, invalid_params, invalid_request,
+    internal_error, invalid_params,
     solana::{
         decode_and_deserialize, get_spl_token_mint_filter, get_spl_token_owner_filter,
         verify_filter, verify_pubkey, verify_signature, verify_token_account_filter,
@@ -31,6 +31,7 @@ use crate::rpc::{
 };
 use jsonrpsee::core::{async_trait, RpcResult};
 use litesvm::types::TransactionResult;
+use serde::{de::DeserializeOwned, Serialize};
 use solana_account_decoder::{
     encode_ui_account,
     parse_account_data::{AccountAdditionalDataV2, SplTokenAdditionalData},
@@ -61,12 +62,17 @@ use solana_rpc_client_api::{
 use solana_sdk::{
     account::{Account, ReadableAccount},
     clock::UnixTimestamp,
+    feature_set::{remove_rounding_in_fee_calculation, FeatureSet},
+    fee::FeeStructure,
+    message::{SanitizedMessage, SanitizedVersionedMessage, SimpleAddressLoader},
     pubkey::Pubkey,
+    reserved_account_keys::ReservedAccountKeys,
     signature::Signature,
-    transaction::VersionedTransaction,
 };
+use solana_sdk::{hash::Hash, message::VersionedMessage};
 use solana_transaction_status::{
-    TransactionConfirmationStatus, TransactionStatus, UiTransactionEncoding,
+    TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionStatus,
+    UiTransactionEncoding,
 };
 use std::collections::HashMap;
 use svm::SvmRequest;
@@ -144,11 +150,11 @@ impl SolanaServer for MockSolana {
         } = config.unwrap_or_default();
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
 
-        let (_, slot) = get_mock_hash_and_slot();
-
         let response = self
             .get_encoded_accounts(&pubkeys, encoding, data_slice_config, None)
             .await?;
+
+        let (_blockhash, slot) = self.get_mock_hash_and_slot().await?;
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -319,7 +325,7 @@ impl SolanaServer for MockSolana {
     ) -> RpcResult<RpcResponse<RpcBlockhash>> {
         tracing::debug!("get_latest_blockhash rpc request received");
 
-        let (blockhash, slot) = get_mock_hash_and_slot();
+        let (blockhash, slot) = self.get_mock_hash_and_slot().await?;
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -354,29 +360,15 @@ impl SolanaServer for MockSolana {
             )))
         })?;
 
-        let (_wire_transaction, unsanitized_tx) =
-            decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
-        tracing::debug!("{:#?}", unsanitized_tx);
+        let transaction_result = execute::<(String, TransactionBinaryEncoding), TransactionResult>(
+            &self.svm,
+            "sendTransaction".to_string(),
+            &(data, binary_encoding),
+        )
+        .await?
+        .map_err(|e| internal_error(Some(format!("send_transaction failed. {:?}", e))))?;
 
-        let (tx, rx) = oneshot::channel();
-        self.svm
-            .send(SvmRequest {
-                method: "sendTransaction".to_string(),
-                params: serde_json::to_vec(&unsanitized_tx).unwrap(),
-                response: Some(tx),
-            })
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        let result = rx
-            .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        let result = serde_json::from_slice::<TransactionResult>(&result)
-            .unwrap()
-            .map_err(|e| invalid_request(Some(format!("{:?}", e))))?;
-
-        Ok(result.signature.to_string())
+        Ok(transaction_result.signature.to_string())
     }
 
     async fn simulate_transaction(
@@ -421,18 +413,41 @@ impl SolanaServer for MockSolana {
 
     async fn get_fee_for_message(
         &self,
-        _data: String,
+        data: String,
         _config: Option<RpcContextConfig>,
     ) -> RpcResult<RpcResponse<Option<u64>>> {
         tracing::debug!("get_fee_for_message rpc request received");
 
-        let (_, slot) = get_mock_hash_and_slot();
+        let (_, message) =
+            decode_and_deserialize::<VersionedMessage>(data, TransactionBinaryEncoding::Base64)?;
+        let sanitized_versioned_message = SanitizedVersionedMessage::try_from(message)
+            .map_err(|e| invalid_params(Some(format!("{:?}", e))))?;
+        let sanitized_message = SanitizedMessage::try_new(
+            sanitized_versioned_message,
+            SimpleAddressLoader::Disabled,
+            &ReservedAccountKeys::empty_key_set(),
+        )
+        .map_err(|e| invalid_params(Some(format!("{:?}", e))))?;
+
+        let fee_structure = FeeStructure::default();
+        let feature_set = FeatureSet::default();
+        let fee = solana_fee::calculate_fee(
+            &sanitized_message,
+            false,
+            fee_structure.lamports_per_signature,
+            0,
+            feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
+        );
+        tracing::debug!("get_fee_for_message: fee={:?}", fee);
+
+        let (_blockhash, slot) = self.get_mock_hash_and_slot().await?;
+
         Ok(RpcResponse {
             context: RpcResponseContext {
                 slot,
                 api_version: Default::default(),
             },
-            value: Some(1000000),
+            value: Some(fee),
         })
     }
 
@@ -449,25 +464,11 @@ impl SolanaServer for MockSolana {
         } = config.unwrap_or_default();
         let pubkey = verify_pubkey(&pubkey_str)?;
 
-        let (tx, rx) = oneshot::channel();
-        self.svm
-            .send(SvmRequest {
-                method: "getBalance".to_string(),
-                params: serde_json::to_vec(&pubkey).unwrap(),
-                response: Some(tx),
-            })
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        let result = rx
-            .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        let balance = serde_json::from_slice::<Option<u64>>(&result)
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
+        let balance = execute::<Pubkey, Option<u64>>(&self.svm, "getBalance".to_string(), &pubkey)
+            .await?
             .unwrap_or_default();
 
-        let (_blockhash, slot) = get_mock_hash_and_slot();
+        let (_blockhash, slot) = self.get_mock_hash_and_slot().await?;
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -526,24 +527,13 @@ impl SolanaServer for MockSolana {
         );
 
         let pubkey = verify_pubkey(&pubkey_str)?;
-
-        let (tx, rx) = oneshot::channel();
-        self.svm
-            .send(SvmRequest {
-                method: "requestAirdrop".to_string(),
-                params: serde_json::to_vec(&(pubkey, lamports)).unwrap(),
-                response: Some(tx),
-            })
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        let result = rx
-            .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        let transaction = serde_json::from_slice::<TransactionResult>(&result)
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+        let transaction = execute::<(Pubkey, u64), TransactionResult>(
+            &self.svm,
+            "requestAirdrop".to_string(),
+            &(pubkey, lamports),
+        )
+        .await?
+        .map_err(|e| internal_error(Some(format!("request_airdrop failed. {:?}", e))))?;
 
         Ok(transaction.signature.to_string())
     }
@@ -592,24 +582,15 @@ impl SolanaServer for MockSolana {
             signatures.push(verify_signature(&signature_str)?);
         }
 
-        let (tx, rx) = oneshot::channel();
-        self.svm
-            .send(SvmRequest {
-                method: "getTransactions".to_string(),
-                params: serde_json::to_vec(&signatures).unwrap(),
-                response: Some(tx),
-            })
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+        let transactions = execute::<Vec<Signature>, Vec<Option<TransactionResult>>>(
+            &self.svm,
+            "getTransactions".to_string(),
+            &signatures,
+        )
+        .await?;
 
-        let result = rx
-            .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+        let (_blockhash, slot) = self.get_mock_hash_and_slot().await?;
 
-        let transactions =
-            serde_json::from_slice::<Vec<Option<TransactionResult>>>(&result).unwrap();
-
-        let (_blockhahs, slot) = get_mock_hash_and_slot();
         let statuses = transactions
             .into_iter()
             .map(|result| {
@@ -625,8 +606,6 @@ impl SolanaServer for MockSolana {
                 })
             })
             .collect();
-
-        let (_blockhahs, slot) = get_mock_hash_and_slot();
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -805,52 +784,29 @@ impl MockSolana {
     }
 
     pub async fn get_account(&self, pubkey: &Pubkey) -> RpcResult<Option<Account>> {
-        let (tx, rx) = oneshot::channel();
-        self.svm
-            .send(SvmRequest {
-                method: "getAccount".to_string(),
-                params: serde_json::to_vec(pubkey).unwrap(),
-                response: Some(tx),
-            })
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        let result = rx
-            .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        let account = serde_json::from_slice::<Option<Account>>(&result)
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+        let account =
+            execute::<Pubkey, Option<Account>>(&self.svm, "getAccount".to_string(), pubkey).await?;
 
         Ok(account)
     }
 
     pub async fn get_accounts(
         &self,
-        pubkeys: &[Pubkey],
+        pubkeys: &Vec<Pubkey>,
     ) -> RpcResult<Vec<(Pubkey, Option<Account>)>> {
-        let (tx, rx) = oneshot::channel();
-        self.svm
-            .send(SvmRequest {
-                method: "getAccounts".to_string(),
-                params: serde_json::to_vec(&pubkeys.to_vec()).unwrap(),
-                response: Some(tx),
-            })
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        let result = rx
-            .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        let accounts = serde_json::from_slice::<Vec<(Pubkey, Option<Account>)>>(&result)
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+        let accounts = execute::<Vec<Pubkey>, Vec<(Pubkey, Option<Account>)>>(
+            &self.svm,
+            "getAccounts".to_string(),
+            pubkeys,
+        )
+        .await?;
 
         Ok(accounts)
     }
 
     pub async fn get_timestamp(&self) -> RpcResult<UnixTimestamp> {
-        Ok(get_mock_hash_and_slot().1 as i64)
+        let (_blockhash, slot) = self.get_mock_hash_and_slot().await?;
+        Ok(slot as i64)
     }
 
     /// Use a set of filters to get an iterator of keyed program accounts from a bank
@@ -870,22 +826,9 @@ impl MockSolana {
 
         let mut accounts = Vec::new();
         for index_key in indexed_keys.into_iter() {
-            let (tx, rx) = oneshot::channel();
-            self.svm
-                .send(SvmRequest {
-                    method: "getAccount".to_string(),
-                    params: serde_json::to_vec(&index_key).unwrap(),
-                    response: Some(tx),
-                })
-                .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-            let result = rx
-                .await
-                .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-                .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-            let account = serde_json::from_slice::<Option<Account>>(&result)
-                .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+            let account =
+                execute::<Pubkey, Option<Account>>(&self.svm, "getAccount".to_string(), &index_key)
+                    .await?;
 
             if let Some(account) = account {
                 if account.owner == *program_id && filter_closure(&account) {
@@ -1050,13 +993,43 @@ impl MockSolana {
             })
             .collect())
     }
+
+    async fn get_mock_hash_and_slot(&self) -> RpcResult<(String, u64)> {
+        let slot = chrono::Utc::now().timestamp_millis() as u64;
+
+        let hash =
+            execute::<String, Hash>(&self.svm, "latestBlockhash".to_string(), &"".to_string())
+                .await?;
+        Ok((hash.to_string(), slot))
+    }
 }
 
-fn get_mock_hash_and_slot() -> (String, u64) {
-    let slot = chrono::Utc::now().timestamp_millis() as u64;
-    let mut hash = [0u8; 32];
-    hash[..8].copy_from_slice(&slot.to_le_bytes());
-    (bs58::encode(hash).into_string(), slot)
+async fn execute<I, O>(
+    svm: &UnboundedSender<SvmRequest>,
+    method: String,
+    params: &I,
+) -> RpcResult<O>
+where
+    I: Serialize,
+    O: DeserializeOwned,
+{
+    let params =
+        serde_json::to_vec(params).map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+    let (tx, rx) = oneshot::channel();
+    svm.send(SvmRequest {
+        method,
+        params,
+        response: Some(tx),
+    })
+    .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+    let result = rx
+        .await
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+
+    serde_json::from_slice::<O>(&result).map_err(|e| internal_error(Some(format!("{:?}", e))))
 }
 
 pub fn filter_allows(filter: &RpcFilterType, account: &Account) -> bool {

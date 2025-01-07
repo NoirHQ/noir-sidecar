@@ -616,7 +616,7 @@ where
                 )));
             }
 
-            let recent_blockhash = self.last_blockhash().await?;
+            let recent_blockhash = self.latest_blockhash().await?;
             // TODO: Update with the correct value for the valid height
             let Header {
                 number: last_valid_block_height,
@@ -1027,7 +1027,7 @@ where
         .map_err(|e| internal_error(Some(e.to_string())))
     }
 
-    async fn last_blockhash(&self) -> RpcResult<Hash> {
+    async fn latest_blockhash(&self) -> RpcResult<Hash> {
         self.client
             .request("chain_getBlockHash", rpc_params!())
             .await

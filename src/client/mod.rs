@@ -127,7 +127,7 @@ impl Client {
 
                 if let Some(message) = rx.recv().await {
                     tracing::debug!("{:#?}", message);
-                    
+
                     match message {
                         Message::Request(Request {
                             method,
