@@ -527,11 +527,7 @@ where
             .await?;
         let slot = self.get_slot(hash).await?;
 
-        let Header { number, .. } = self
-            .client
-            .request("chain_getHeader", rpc_params!(hash))
-            .await
-            .map_err(|e| internal_error(Some(e.to_string())))?;
+        let last_valid_block_height = self.get_last_valid_block_height(hash).await?;
 
         // TODO: Complete rpc response context
         Ok(RpcResponse {
@@ -542,7 +538,7 @@ where
             value: RpcBlockhash {
                 blockhash: bs58::encode(hash.as_bytes()).into_string(),
                 // TODO: Update with the correct value for the valid height
-                last_valid_block_height: number as u64,
+                last_valid_block_height,
             },
         })
     }
@@ -1522,6 +1518,19 @@ where
     ) -> RpcResult<Option<TransactionStatus>> {
         // TODO: Return status
         Ok(None)
+    }
+
+    async fn get_last_valid_block_height(&self, hash: Hash) -> RpcResult<u64> {
+        let Header { number, .. } = self
+            .client
+            .request("chain_getHeader", rpc_params!(hash))
+            .await
+            .map_err(|e| internal_error(Some(e.to_string())))?;
+
+        // TODO: Get max_age
+        let max_age: u32 = 20;
+
+        Ok(number.saturating_sub(max_age) as u64)
     }
 }
 
