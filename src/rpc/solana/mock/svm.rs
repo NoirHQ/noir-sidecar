@@ -23,6 +23,7 @@ use solana_sdk::{
 use solana_transaction_status::TransactionBinaryEncoding;
 use std::time::Duration;
 use tokio::sync::{mpsc::UnboundedReceiver, oneshot::Sender};
+use tokio::task::JoinHandle;
 
 #[derive(Debug)]
 pub enum SvmError {
@@ -44,7 +45,7 @@ pub struct SvmRequest {
 pub struct LiteSVM;
 
 impl LiteSVM {
-    pub async fn run(mut svm_rx: UnboundedReceiver<SvmRequest>) {
+    pub async fn run(mut svm_rx: UnboundedReceiver<SvmRequest>) -> JoinHandle<()> {
         tokio::task::spawn_blocking(move || {
             let mut svm = litesvm::LiteSVM::new();
 
@@ -77,8 +78,6 @@ impl LiteSVM {
                 }
             }
         })
-        .await
-        .unwrap();
     }
 
     fn get_account(svm: &litesvm::LiteSVM, params: Vec<u8>) -> Result<Vec<u8>, SvmError> {
