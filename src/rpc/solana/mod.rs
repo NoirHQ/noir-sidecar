@@ -297,7 +297,7 @@ where
             .iter()
             .map(|pubkey| verify_pubkey(pubkey))
             .collect::<Result<Vec<Pubkey>, _>>()
-            .map_err(|e| invalid_params(Some(e.to_string())))?;
+            .map_err(|e| invalid_params(Some(format!("{:?}", e))))?;
 
         let RpcAccountInfoConfig {
             encoding,
@@ -621,7 +621,7 @@ where
                 .client
                 .request("chain_getHeader", rpc_params!(hash))
                 .await
-                .map_err(|e| internal_error(Some(e.to_string())))?;
+                .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
             unsanitized_tx
                 .message
@@ -633,8 +633,8 @@ where
         }
 
         let method = "simulateTransaction".to_string();
-        let params = serde_json::to_vec(&(unsanitized_tx, sig_verify, enable_cpi_recording))
-            .map_err(|e| parse_error(Some(e.to_string())))?;
+        let params = solana_bincode::serialize(&(unsanitized_tx, sig_verify, enable_cpi_recording))
+            .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
         let response = state_call::<_, Result<Vec<u8>, Error>>(
             &self.client,
@@ -643,7 +643,7 @@ where
             Some(hash),
         )
         .await
-        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         let (
@@ -656,11 +656,11 @@ where
                 inner_instructions,
             },
             (static_keys, dynamic_keys),
-        ) = serde_json::from_slice::<(
+        ) = solana_bincode::deserialize::<(
             TransactionSimulationResult,
             (Vec<Pubkey>, Option<(Vec<Pubkey>, Vec<Pubkey>)>),
         )>(&response)
-        .map_err(|e| internal_error(Some(e.to_string())))?;
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
         let dynamic_keys =
             dynamic_keys.map(|(writable, readonly)| LoadedAddresses { writable, readonly });
         let account_keys = AccountKeys::new(&static_keys, dynamic_keys.as_ref());
@@ -698,7 +698,7 @@ where
                     .iter()
                     .map(|pubkey| verify_pubkey(pubkey))
                     .collect::<Result<Vec<Pubkey>, _>>()
-                    .map_err(|e| invalid_params(Some(e.to_string())))?;
+                    .map_err(|e| invalid_params(Some(format!("{:?}", e))))?;
 
                 Some(
                     self.get_encoded_accounts(
@@ -768,7 +768,8 @@ where
         let slot = self.get_slot(hash).await?;
 
         let method = "getFeeForMessage".to_string();
-        let params = serde_json::to_vec(&message).map_err(|e| parse_error(Some(e.to_string())))?;
+        let params = solana_bincode::serialize(&message)
+            .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
         let response = state_call::<_, Result<Vec<u8>, Error>>(
             &self.client,
@@ -777,17 +778,17 @@ where
             Some(hash),
         )
         .await
-        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        let fee: Option<u64> = serde_json::from_slice::<_>(&response)
-            .map_err(|e| internal_error(Some(e.to_string())))?;
+        let fee: u64 = solana_bincode::deserialize::<_>(&response)
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
         Ok(RpcResponse {
             context: RpcResponseContext {
                 slot,
                 api_version: Default::default(),
             },
-            value: fee,
+            value: Some(fee),
         })
     }
 
@@ -812,7 +813,8 @@ where
         let slot = self.get_slot(hash).await?;
 
         let method = "getBalance".to_string();
-        let params = serde_json::to_vec(&pubkey).map_err(|e| parse_error(Some(e.to_string())))?;
+        let params = solana_bincode::serialize(&pubkey)
+            .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
         let response = state_call::<_, Result<Vec<u8>, Error>>(
             &self.client,
@@ -821,11 +823,11 @@ where
             Some(hash),
         )
         .await
-        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        let balance = serde_json::from_slice::<u64>(&response)
-            .map_err(|e| internal_error(Some(e.to_string())))?;
+        let balance = solana_bincode::deserialize::<u64>(&response)
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -843,7 +845,7 @@ where
             .client
             .request("chain_getBlockHash", rpc_params!(0))
             .await
-            .map_err(|e| internal_error(Some(e.to_string())))?;
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         Ok(bs58::encode(hash.as_bytes()).into_string())
     }
@@ -852,7 +854,7 @@ where
     //     tracing::debug!("get_epoch_info rpc request received");
 
     //     let method = "getEpochInfo".to_string();
-    //     let params = serde_json::to_vec(&config).map_err(|e| parse_error(Some(e.to_string())))?;
+    //     let params = solana_bincode::serialize(&config).map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
     //     let response = state_call::<_, Result<Vec<u8>, Error>>(
     //         &self.client,
@@ -861,10 +863,10 @@ where
     //         None,
     //     )
     //     .await
-    //     .map_err(|e| internal_error(Some(e.to_string())))?
+    //     .map_err(|e| internal_error(Some(format!("{:?}", e))))?
     //     .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-    //     serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
+    //     solana_bincode::deserialize::<_>(&response).map_err(|e| internal_error(Some(format!("{:?}", e))))
     // }
 
     // async fn get_transaction_count(&self, config: Option<RpcContextConfig>) -> RpcResult<u64> {
@@ -882,7 +884,7 @@ where
     //         .await?;
 
     //     let method = "getTransactionCount".to_string();
-    //     let params = serde_json::to_vec("").map_err(|e| parse_error(Some(e.to_string())))?;
+    //     let params = solana_bincode::serialize("").map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
     //     let response = state_call::<_, Result<Vec<u8>, Error>>(
     //         &self.client,
@@ -891,10 +893,10 @@ where
     //         Some(hash),
     //     )
     //     .await
-    //     .map_err(|e| internal_error(Some(e.to_string())))?
+    //     .map_err(|e| internal_error(Some(format!("{:?}", e))))?
     //     .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-    //     serde_json::from_slice::<_>(&response).map_err(|e| internal_error(Some(e.to_string())))
+    //     solana_bincode::deserialize::<_>(&response).map_err(|e| internal_error(Some(format!("{:?}", e))))
     // }
 
     async fn get_version(&self) -> RpcResult<RpcVersionInfo> {
@@ -1020,14 +1022,14 @@ where
                     .await
             }
         }
-        .map_err(|e| internal_error(Some(e.to_string())))
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))
     }
 
     async fn latest_blockhash(&self) -> RpcResult<Hash> {
         self.client
             .request("chain_getBlockHash", rpc_params!())
             .await
-            .map_err(|e| internal_error(Some(e.to_string())))
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))
     }
 
     /// Analyze a passed Pubkey that may be a Token program id or Mint address to determine the program
@@ -1210,7 +1212,8 @@ where
 
     pub async fn get_account(&self, pubkey: &Pubkey, hash: Hash) -> RpcResult<Option<Account>> {
         let method = "getAccountInfo".to_string();
-        let params = serde_json::to_vec(pubkey).map_err(|e| parse_error(Some(e.to_string())))?;
+        let params =
+            solana_bincode::serialize(pubkey).map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
         let response = state_call::<_, Result<Vec<u8>, Error>>(
             &self.client,
@@ -1219,11 +1222,11 @@ where
             Some(hash),
         )
         .await
-        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        serde_json::from_slice::<Option<Account>>(&response)
-            .map_err(|e| internal_error(Some(e.to_string())))
+        solana_bincode::deserialize::<Option<Account>>(&response)
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))
     }
 
     pub async fn get_accounts(
@@ -1232,7 +1235,8 @@ where
         hash: Hash,
     ) -> RpcResult<Vec<(Pubkey, Option<Account>)>> {
         let method = "getMultipleAccounts".to_string();
-        let params = serde_json::to_vec(pubkeys).map_err(|e| parse_error(Some(e.to_string())))?;
+        let params = solana_bincode::serialize(pubkeys)
+            .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
         let response = state_call::<_, Result<Vec<u8>, Error>>(
             &self.client,
@@ -1241,11 +1245,11 @@ where
             Some(hash),
         )
         .await
-        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        let accounts = serde_json::from_slice::<Vec<Option<Account>>>(&response)
-            .map_err(|e| internal_error(Some(e.to_string())))?;
+        let accounts = solana_bincode::deserialize::<Vec<Option<Account>>>(&response)
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         if pubkeys.len() != accounts.len() {
             return Err(internal_error(Some(
@@ -1265,13 +1269,14 @@ where
             .client
             .request::<Option<String>>("state_getStorage", params)
             .await
-            .map_err(|e| internal_error(Some(e.to_string())))?
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
             .ok_or(internal_error(Some("Timestamp not exist".to_string())))?;
 
         if response.starts_with("0x") {
             response = response.strip_prefix("0x").map(|s| s.to_string()).unwrap();
         }
-        let response = hex::decode(response).map_err(|e| internal_error(Some(e.to_string())))?;
+        let response =
+            hex::decode(response).map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         Ok(u64::from_le_bytes(response.try_into().unwrap()) as i64)
     }
@@ -1285,13 +1290,14 @@ where
             .client
             .request::<Option<String>>("state_getStorage", params)
             .await
-            .map_err(|e| internal_error(Some(e.to_string())))?
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
             .ok_or(internal_error(Some("Solana slot not exist".to_string())))?;
 
         if response.starts_with("0x") {
             response = response.strip_prefix("0x").map(|s| s.to_string()).unwrap();
         }
-        let response = hex::decode(response).map_err(|e| internal_error(Some(e.to_string())))?;
+        let response =
+            hex::decode(response).map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         Ok(u64::from_le_bytes(response.try_into().unwrap()))
     }
@@ -1308,8 +1314,8 @@ where
         optimize_filters(&mut filters);
 
         let method = "getProgramAccounts".to_string();
-        let params = serde_json::to_vec(&(program_id, indexed_keys, filters))
-            .map_err(|e| parse_error(Some(e.to_string())))?;
+        let params = solana_bincode::serialize(&(program_id, indexed_keys, filters))
+            .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
         let response = state_call::<_, Result<Vec<u8>, Error>>(
             &self.client,
@@ -1318,11 +1324,11 @@ where
             Some(hash),
         )
         .await
-        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        serde_json::from_slice::<Vec<(Pubkey, Account)>>(&response)
-            .map_err(|e| internal_error(Some(e.to_string())))
+        solana_bincode::deserialize::<Vec<(Pubkey, Account)>>(&response)
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))
     }
 
     async fn get_filtered_spl_token_accounts_by_owner(
@@ -1453,8 +1459,8 @@ where
         unsanitized_tx: &VersionedTransaction,
     ) -> RpcResult<Vec<u8>> {
         let method = "convertTransaction".to_string();
-        let params =
-            serde_json::to_vec(unsanitized_tx).map_err(|e| parse_error(Some(e.to_string())))?;
+        let params = solana_bincode::serialize(unsanitized_tx)
+            .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
         state_call::<_, Result<Vec<u8>, Error>>(
             &self.client,
@@ -1463,7 +1469,7 @@ where
             None,
         )
         .await
-        .map_err(|e| internal_error(Some(e.to_string())))?
+        .map_err(|e| internal_error(Some(format!("{:?}", e))))?
         .map_err(|e| internal_error(Some(format!("{:?}", e))))
     }
 
@@ -1472,7 +1478,7 @@ where
         self.client
             .request("author_submitExtrinsic", rpc_params!(transaction))
             .await
-            .map_err(|e| invalid_request(Some(e.to_string())))
+            .map_err(|e| invalid_request(Some(format!("{:?}", e))))
     }
 
     async fn get_accounts_from_overwrites_or_node(
@@ -1525,7 +1531,7 @@ where
             .client
             .request("chain_getHeader", rpc_params!(hash))
             .await
-            .map_err(|e| internal_error(Some(e.to_string())))?;
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         // TODO: Get max_age
         let max_age: u32 = 20;
@@ -1600,7 +1606,7 @@ fn get_additional_mint_data(
     timestamp: UnixTimestamp,
 ) -> RpcResult<SplTokenAdditionalData> {
     StateWithExtensions::<Mint>::unpack(data)
-        .map_err(|e| invalid_params(Some(e.to_string())))
+        .map_err(|e| invalid_params(Some(format!("{:?}", e))))
         .map(|mint| {
             let interest_bearing_config = mint
                 .get_extension::<InterestBearingConfig>()

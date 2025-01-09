@@ -73,7 +73,7 @@ pub async fn handle_rpc_request(
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::to_value(internal_error(Some(e.to_string()))).unwrap()),
+                Json(serde_json::to_value(internal_error(Some(format!("{:?}", e)))).unwrap()),
             )
         }
     };
@@ -125,7 +125,7 @@ pub async fn state_call<I: Encode, O: Decode>(
     if res.starts_with("0x") {
         res = res.strip_prefix("0x").map(|s| s.to_string()).unwrap();
     }
-    let res = hex::decode(res).map_err(|e| ClientError::Custom(e.to_string()))?;
+    let res = hex::decode(res).map_err(|e| ClientError::Custom(format!("{:?}", e)))?;
 
-    O::decode(&mut &res[..]).map_err(|e| ClientError::Custom(e.to_string()))
+    O::decode(&mut &res[..]).map_err(|e| ClientError::Custom(format!("{:?}", e)))
 }

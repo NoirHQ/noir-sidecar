@@ -64,12 +64,14 @@ use solana_sdk::{
     clock::UnixTimestamp,
     feature_set::{remove_rounding_in_fee_calculation, FeatureSet},
     fee::FeeStructure,
+    hash::Hash,
+    message::VersionedMessage,
     message::{SanitizedMessage, SanitizedVersionedMessage, SimpleAddressLoader},
     pubkey::Pubkey,
     reserved_account_keys::ReservedAccountKeys,
     signature::Signature,
+    transaction::VersionedTransaction,
 };
-use solana_sdk::{hash::Hash, message::VersionedMessage};
 use solana_transaction_status::{
     TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionStatus,
     UiTransactionEncoding,
@@ -140,7 +142,7 @@ impl SolanaServer for MockSolana {
             .iter()
             .map(|pubkey| verify_pubkey(pubkey))
             .collect::<Result<Vec<Pubkey>, _>>()
-            .map_err(|e| invalid_params(Some(e.to_string())))?;
+            .map_err(|e| invalid_params(Some(format!("{:?}", e))))?;
 
         let RpcAccountInfoConfig {
             encoding,
@@ -360,10 +362,13 @@ impl SolanaServer for MockSolana {
             )))
         })?;
 
-        let transaction_result = execute::<(String, TransactionBinaryEncoding), TransactionResult>(
+        let (_wire_transaction, unsanitized_tx) =
+            decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
+
+        let transaction_result = execute::<VersionedTransaction, TransactionResult>(
             &self.svm,
             "sendTransaction".to_string(),
-            &(data, binary_encoding),
+            &unsanitized_tx,
         )
         .await?
         .map_err(|e| internal_error(Some(format!("send_transaction failed. {:?}", e))))?;
@@ -1014,7 +1019,7 @@ where
     O: DeserializeOwned,
 {
     let params =
-        serde_json::to_vec(params).map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+        solana_bincode::serialize(params).map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
     let (tx, rx) = oneshot::channel();
     svm.send(SvmRequest {
@@ -1029,7 +1034,7 @@ where
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-    serde_json::from_slice::<O>(&result).map_err(|e| internal_error(Some(format!("{:?}", e))))
+    solana_bincode::deserialize::<O>(&result).map_err(|e| internal_error(Some(format!("{:?}", e))))
 }
 
 pub fn filter_allows(filter: &RpcFilterType, account: &Account) -> bool {

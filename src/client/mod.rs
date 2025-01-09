@@ -79,11 +79,11 @@ impl Client {
                 response: res_tx,
                 retry: 3,
             }))
-            .map_err(|e| ClientError::Custom(e.to_string()))?;
+            .map_err(|e| ClientError::Custom(format!("{:?}", e)))?;
 
         let response = res_rx
             .await
-            .map_err(|e| ClientError::Custom(e.to_string()))??;
+            .map_err(|e| ClientError::Custom(format!("{:?}", e)))??;
         serde_json::from_value::<R>(response).map_err(ClientError::ParseError)
     }
 
