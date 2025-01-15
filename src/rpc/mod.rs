@@ -41,6 +41,7 @@ pub struct JsonRpcModule {
 }
 
 impl JsonRpcModule {
+    #[cfg(not(feature = "mock"))]
     pub fn create<I>(client: Arc<Client>, accounts_index: Arc<I>) -> Result<Self, anyhow::Error>
     where
         I: 'static + Sync + Send + traits::AccountsIndex,
@@ -51,30 +52,15 @@ impl JsonRpcModule {
 
         Ok(Self { inner: module })
     }
-}
 
-#[cfg(not(feature = "mock"))]
-pub fn create_rpc_module<I>(
-    client: Arc<Client>,
-    accounts_index: Arc<I>,
-) -> Result<RpcModule<()>, anyhow::Error>
-where
-    I: 'static + Sync + Send + traits::AccountsIndex,
-{
-    let mut module = RpcModule::new(());
+    #[cfg(feature = "mock")]
+    pub fn create(svm: UnboundedSender<SvmRequest>) -> Result<RpcModule<()>, anyhow::Error> {
+        let mut module = RpcModule::new(());
 
-    module.merge(Solana::new(client.clone(), accounts_index).into_rpc())?;
+        module.merge(MockSolana::new(svm).into_rpc())?;
 
-    Ok(module)
-}
-
-#[cfg(feature = "mock")]
-pub fn create_rpc_module(svm: UnboundedSender<SvmRequest>) -> Result<RpcModule<()>, anyhow::Error> {
-    let mut module = RpcModule::new(());
-
-    module.merge(MockSolana::new(svm).into_rpc())?;
-
-    Ok(module)
+        Ok(Self { inner: module })
+    }
 }
 
 pub async fn handle_rpc_request(

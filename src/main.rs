@@ -104,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(feature = "mock")]
     {
         let (svm_tx, svm_rx) = tokio::sync::mpsc::unbounded_channel::<SvmRequest>();
-        let module = create_rpc_module(svm_tx.clone())
+        let module = JsonRpcModule::create(svm_tx.clone())
             .map(Arc::new)
             .expect("Failed to create jsonrpc handler.");
 
