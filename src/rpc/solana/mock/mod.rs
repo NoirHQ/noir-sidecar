@@ -400,22 +400,6 @@ impl SolanaServer for MockSolana {
         })
     }
 
-    // async fn get_inflation_reward(
-    //     &self,
-    //     address_strs: Vec<String>,
-    //     _config: Option<RpcEpochConfig>,
-    // ) -> RpcResult<Vec<Option<RpcInflationReward>>> {
-    //     tracing::debug!(
-    //         "get_inflation_reward rpc request received: {:?}",
-    //         address_strs.len()
-    //     );
-
-    //     Ok(address_strs
-    //         .into_iter()
-    //         .map(|_| None)
-    //         .collect::<Vec<Option<RpcInflationReward>>>())
-    // }
-
     async fn get_fee_for_message(
         &self,
         data: String,
@@ -489,25 +473,6 @@ impl SolanaServer for MockSolana {
 
         Ok(bs58::encode(&[0u8; 32]).into_string())
     }
-
-    // async fn get_epoch_info(&self, _config: Option<RpcContextConfig>) -> RpcResult<EpochInfo> {
-    //     tracing::debug!("get_epoch_info rpc request received");
-
-    //     Ok(EpochInfo {
-    //         epoch: Default::default(),
-    //         slot_index: Default::default(),
-    //         slots_in_epoch: Default::default(),
-    //         absolute_slot: Default::default(),
-    //         block_height: Default::default(),
-    //         transaction_count: Default::default(),
-    //     })
-    // }
-
-    // async fn get_transaction_count(&self, _config: Option<RpcContextConfig>) -> RpcResult<u64> {
-    //     tracing::debug!("get_transaction_count rpc request received");
-
-    //     Ok(Default::default())
-    // }
 
     async fn get_version(&self) -> RpcResult<RpcVersionInfo> {
         tracing::debug!("get_version rpc request received");
