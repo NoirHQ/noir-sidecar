@@ -97,10 +97,6 @@ pub fn internal_error(message: Option<String>) -> ErrorObjectOwned {
     error(ErrorCode::InternalError, message)
 }
 
-pub fn parse_error(message: Option<String>) -> ErrorObjectOwned {
-    error(ErrorCode::ParseError, message)
-}
-
 pub fn invalid_params(message: Option<String>) -> ErrorObjectOwned {
     error(ErrorCode::InvalidParams, message)
 }

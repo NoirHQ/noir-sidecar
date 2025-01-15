@@ -21,12 +21,16 @@
 pub mod mock;
 
 use super::invalid_request;
+use crate::client::solana::{
+    convert_transaction, get_account, get_accounts, get_balance, get_fee_for_message,
+    get_filtered_indexed_accounts, get_genesis_hash, get_slot, get_timestamp, latest_blockhash,
+    simulate_transaction, submit_transaction,
+};
 use crate::client::Client;
 use crate::db::index::traits;
-use crate::rpc::{internal_error, invalid_params, parse_error};
+use crate::rpc::{internal_error, invalid_params};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bincode::Options;
-use jsonrpsee::core::params::ArrayParams;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -65,8 +69,6 @@ use solana_rpc_client_api::{
         RpcResponseContext, RpcSimulateTransactionResult,
     },
 };
-use solana_runtime_api::error::Error;
-use solana_sdk::clock::Slot;
 use solana_sdk::signature::Signature;
 use solana_sdk::{
     account::{Account, ReadableAccount},
@@ -91,11 +93,6 @@ use spl_token_2022::{
     state::{Account as TokenAccount, Mint},
 };
 use std::{any::type_name, cmp::min, collections::HashMap, str::FromStr, sync::Arc};
-
-// twox128("Timestamp") + twox128("Now")
-const TIMESTAMP_KEY: &str = "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb";
-// twox128("Solana") + twox128("Slot")
-const SLOT_KEY: &str = "0xe4ad0d288d0ccf2a73473d025d07cea4ec862ddb18bc3dcede937c1cc93b0aae";
 
 pub type TransactionLogMessages = Vec<String>;
 
@@ -250,7 +247,9 @@ where
                 min_context_slot,
             })
             .await?;
-        let slot = self.get_slot(hash).await?;
+        let slot = get_slot(&self.client, hash)
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
 
         let response = self
@@ -298,7 +297,9 @@ where
                 min_context_slot,
             })
             .await?;
-        let slot = self.get_slot(hash).await?;
+        let slot = get_slot(&self.client, hash)
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
 
         let response = self
@@ -355,7 +356,9 @@ where
                 min_context_slot,
             })
             .await?;
-        let slot = self.get_slot(hash).await?;
+        let slot = get_slot(&self.client, hash)
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
         optimize_filters(&mut filters);
 
@@ -383,14 +386,15 @@ where
                     .get_indexed_keys(AccountIndex::ProgramId, &program_id, sort_results)
                     .await?;
 
-                self.get_filtered_indexed_accounts(
+                get_filtered_indexed_accounts(
+                    &self.client,
                     &program_id,
                     indexed_keys,
                     filters,
-                    sort_results,
                     hash,
                 )
-                .await?
+                .await
+                .map_err(|e| internal_error(Some(format!("{:?}", e))))?
             }
         };
 
@@ -448,7 +452,9 @@ where
                 min_context_slot,
             })
             .await?;
-        let slot = self.get_slot(hash).await?;
+        let slot = get_slot(&self.client, hash)
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
         let encoding = encoding.unwrap_or(UiAccountEncoding::Binary);
         let (token_program_id, mint) = self
             .get_token_program_id_and_mint(token_account_filter, hash)
@@ -512,7 +518,9 @@ where
                 min_context_slot,
             })
             .await?;
-        let slot = self.get_slot(hash).await?;
+        let slot = get_slot(&self.client, hash)
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         let last_valid_block_height = self.get_last_valid_block_height(hash).await?;
 
@@ -554,8 +562,12 @@ where
         let (_wire_transaction, unsanitized_tx) =
             decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
 
-        let converted_tx = self.convert_transaction(&unsanitized_tx).await?;
-        let _hash = self.submit_transaction(converted_tx).await?;
+        let converted_tx = convert_transaction(&self.client, &unsanitized_tx)
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+        let _hash = submit_transaction(&self.client, converted_tx)
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         Ok(unsanitized_tx.signatures[0].to_string())
     }
@@ -566,6 +578,7 @@ where
         config: Option<RpcSimulateTransactionConfig>,
     ) -> RpcResult<RpcResponse<RpcSimulateTransactionResult>> {
         tracing::debug!("simulate_transaction rpc request received");
+
         let RpcSimulateTransactionConfig {
             sig_verify,
             replace_recent_blockhash,
@@ -590,7 +603,9 @@ where
                 min_context_slot,
             })
             .await?;
-        let slot = self.get_slot(hash).await?;
+        let slot = get_slot(&self.client, hash)
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
         let mut blockhash: Option<RpcBlockhash> = None;
         if replace_recent_blockhash {
             if sig_verify {
@@ -599,40 +614,28 @@ where
                 )));
             }
 
-            let recent_blockhash = self.latest_blockhash().await?;
+            let recent_blockhash = latest_blockhash(&self.client)
+                .await
+                .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
             // TODO: Update with the correct value for the valid height
             let Header {
                 number: last_valid_block_height,
                 ..
             } = self
                 .client
-                .request("chain_getHeader", rpc_params!(hash))
+                .request("chain_getHeader", rpc_params!(recent_blockhash))
                 .await
                 .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
+            let max_age: u32 = 20;
             unsanitized_tx
                 .message
                 .set_recent_blockhash(recent_blockhash.0.into());
             blockhash.replace(RpcBlockhash {
                 blockhash: recent_blockhash.to_string(),
-                last_valid_block_height: last_valid_block_height.into(),
+                last_valid_block_height: (last_valid_block_height + max_age).into(),
             });
         }
-
-        let method = "simulateTransaction".to_string();
-        let params = solana_bincode::serialize(&(unsanitized_tx, sig_verify, enable_cpi_recording))
-            .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
-
-        let response = self
-            .client
-            .state_call::<_, Result<Vec<u8>, Error>>(
-                "SolanaRuntimeApi_call",
-                (method, params),
-                Some(hash),
-            )
-            .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         let (
             TransactionSimulationResult {
@@ -644,10 +647,14 @@ where
                 inner_instructions,
             },
             (static_keys, dynamic_keys),
-        ) = solana_bincode::deserialize::<(
-            TransactionSimulationResult,
-            (Vec<Pubkey>, Option<(Vec<Pubkey>, Vec<Pubkey>)>),
-        )>(&response)
+        ) = simulate_transaction(
+            &self.client,
+            &unsanitized_tx,
+            sig_verify,
+            enable_cpi_recording,
+            hash,
+        )
+        .await
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
         let dynamic_keys =
             dynamic_keys.map(|(writable, readonly)| LoadedAddresses { writable, readonly });
@@ -737,24 +744,12 @@ where
         let hash = self
             .get_hash_with_config(config.unwrap_or_default())
             .await?;
-        let slot = self.get_slot(hash).await?;
-
-        let method = "getFeeForMessage".to_string();
-        let params = solana_bincode::serialize(&message)
-            .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
-
-        let response = self
-            .client
-            .state_call::<_, Result<Vec<u8>, Error>>(
-                "SolanaRuntimeApi_call",
-                (method, params),
-                Some(hash),
-            )
+        let slot = get_slot(&self.client, hash)
             .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
             .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        let fee: u64 = solana_bincode::deserialize::<_>(&response)
+        let fee: u64 = get_fee_for_message(&self.client, &message, hash)
+            .await
             .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
         Ok(RpcResponse {
             context: RpcResponseContext {
@@ -783,24 +778,12 @@ where
                 min_context_slot,
             })
             .await?;
-        let slot = self.get_slot(hash).await?;
-
-        let method = "getBalance".to_string();
-        let params = solana_bincode::serialize(&pubkey)
-            .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
-
-        let response = self
-            .client
-            .state_call::<_, Result<Vec<u8>, Error>>(
-                "SolanaRuntimeApi_call",
-                (method, params),
-                Some(hash),
-            )
+        let slot = get_slot(&self.client, hash)
             .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
             .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        let balance = solana_bincode::deserialize::<u64>(&response)
+        let balance = get_balance(&self.client, &pubkey, hash)
+            .await
             .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         Ok(RpcResponse {
@@ -815,13 +798,9 @@ where
     async fn get_genesis_hash(&self) -> RpcResult<String> {
         tracing::debug!("get_genesis_hash rpc request received");
 
-        let hash: Hash = self
-            .client
-            .request("chain_getBlockHash", rpc_params!(0))
+        get_genesis_hash(&self.client)
             .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        Ok(bs58::encode(hash.as_bytes()).into_string())
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))
     }
 
     async fn get_version(&self) -> RpcResult<RpcVersionInfo> {
@@ -900,7 +879,9 @@ where
                 min_context_slot: None,
             })
             .await?;
-        let slot = self.get_slot(hash).await?;
+        let slot = get_slot(&self.client, hash)
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         let mut statuses: Vec<Option<TransactionStatus>> = vec![];
         for signature in signatures {
@@ -950,13 +931,6 @@ where
         .map_err(|e| internal_error(Some(format!("{:?}", e))))
     }
 
-    async fn latest_blockhash(&self) -> RpcResult<Hash> {
-        self.client
-            .request("chain_getBlockHash", rpc_params!())
-            .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))
-    }
-
     /// Analyze a passed Pubkey that may be a Token program id or Mint address to determine the program
     /// id and optional Mint
     async fn get_token_program_id_and_mint(
@@ -999,13 +973,15 @@ where
                 SplTokenAdditionalData::with_decimals(spl_token::native_mint::DECIMALS),
             ))
         } else {
-            let mint_account = self
-                .get_account(mint, hash)
-                .await?
+            let mint_account = get_account(&self.client, mint, hash)
+                .await
+                .map_err(|e| internal_error(Some(format!("{:?}", e))))?
                 .ok_or(invalid_params(Some(
-                    "Invalid param: could not find mint".to_string(),
+                    "Invalid param: could not find mint.".to_string(),
                 )))?;
-            let timestamp = self.get_timestamp(hash).await?;
+            let timestamp = get_timestamp(&self.client, hash)
+                .await
+                .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
             let mint_data = get_additional_mint_data(mint_account.data(), timestamp)?;
             Ok((*mint_account.owner(), mint_data))
         }
@@ -1036,7 +1012,10 @@ where
         data_slice: Option<UiDataSliceConfig>,
         hash: Hash,
     ) -> RpcResult<Option<UiAccount>> {
-        match self.get_account(pubkey, hash).await? {
+        match get_account(&self.client, pubkey, hash)
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
+        {
             Some(account) => {
                 let response = if is_known_spl_token_id(account.owner())
                     && encoding == UiAccountEncoding::JsonParsed
@@ -1112,9 +1091,14 @@ where
         hash: Hash,
     ) -> RpcResult<UiAccount> {
         let additional_data = if let Some(mint_pubkey) = get_token_account_mint(account.data()) {
-            match self.get_account(&mint_pubkey, hash).await? {
+            match get_account(&self.client, &mint_pubkey, hash)
+                .await
+                .map_err(|e| internal_error(Some(format!("{:?}", e))))?
+            {
                 Some(mint_account) => {
-                    let timestamp = self.get_timestamp(hash).await?;
+                    let timestamp = get_timestamp(&self.client, hash)
+                        .await
+                        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
                     let data = get_additional_mint_data(mint_account.data(), timestamp)?;
                     Some(AccountAdditionalDataV2 {
                         spl_token_additional_data: Some(data),
@@ -1133,130 +1117,6 @@ where
             additional_data,
             None,
         ))
-    }
-
-    pub async fn get_account(&self, pubkey: &Pubkey, hash: Hash) -> RpcResult<Option<Account>> {
-        let method = "getAccountInfo".to_string();
-        let params =
-            solana_bincode::serialize(pubkey).map_err(|e| parse_error(Some(format!("{:?}", e))))?;
-
-        let response = self
-            .client
-            .state_call::<_, Result<Vec<u8>, Error>>(
-                "SolanaRuntimeApi_call",
-                (method, params),
-                Some(hash),
-            )
-            .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        solana_bincode::deserialize::<Option<Account>>(&response)
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))
-    }
-
-    pub async fn get_accounts(
-        &self,
-        pubkeys: &Vec<Pubkey>,
-        hash: Hash,
-    ) -> RpcResult<Vec<(Pubkey, Option<Account>)>> {
-        let method = "getMultipleAccounts".to_string();
-        let params = solana_bincode::serialize(pubkeys)
-            .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
-
-        let response = self
-            .client
-            .state_call::<_, Result<Vec<u8>, Error>>(
-                "SolanaRuntimeApi_call",
-                (method, params),
-                Some(hash),
-            )
-            .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        let accounts = solana_bincode::deserialize::<Vec<Option<Account>>>(&response)
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        if pubkeys.len() != accounts.len() {
-            return Err(internal_error(Some(
-                "Account count mismatch with public keys.".to_string(),
-            )));
-        }
-
-        Ok(pubkeys.iter().cloned().zip(accounts).collect())
-    }
-
-    pub async fn get_timestamp(&self, hash: Hash) -> RpcResult<UnixTimestamp> {
-        let mut params = ArrayParams::new();
-        params.insert(TIMESTAMP_KEY).unwrap();
-        params.insert(hash).unwrap();
-
-        let mut response: String = self
-            .client
-            .request::<Option<String>>("state_getStorage", params)
-            .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-            .ok_or(internal_error(Some("Timestamp not exist".to_string())))?;
-
-        if response.starts_with("0x") {
-            response = response.strip_prefix("0x").map(|s| s.to_string()).unwrap();
-        }
-        let response =
-            hex::decode(response).map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        Ok(u64::from_le_bytes(response.try_into().unwrap()) as i64)
-    }
-
-    pub async fn get_slot(&self, hash: Hash) -> RpcResult<Slot> {
-        let mut params = ArrayParams::new();
-        params.insert(SLOT_KEY).unwrap();
-        params.insert(hash).unwrap();
-
-        let mut response: String = self
-            .client
-            .request::<Option<String>>("state_getStorage", params)
-            .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-            .ok_or(internal_error(Some("Solana slot not exist".to_string())))?;
-
-        if response.starts_with("0x") {
-            response = response.strip_prefix("0x").map(|s| s.to_string()).unwrap();
-        }
-        let response =
-            hex::decode(response).map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        Ok(u64::from_le_bytes(response.try_into().unwrap()))
-    }
-
-    /// Use a set of filters to get an iterator of keyed program accounts from a bank
-    async fn get_filtered_indexed_accounts(
-        &self,
-        program_id: &Pubkey,
-        indexed_keys: Vec<Pubkey>,
-        mut filters: Vec<RpcFilterType>,
-        _sort_results: bool,
-        hash: Hash,
-    ) -> RpcResult<Vec<(Pubkey, Account)>> {
-        optimize_filters(&mut filters);
-
-        let method = "getProgramAccounts".to_string();
-        let params = solana_bincode::serialize(&(program_id, indexed_keys, filters))
-            .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
-
-        let response = self
-            .client
-            .state_call::<_, Result<Vec<u8>, Error>>(
-                "SolanaRuntimeApi_call",
-                (method, params),
-                Some(hash),
-            )
-            .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        solana_bincode::deserialize::<Vec<(Pubkey, Account)>>(&response)
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))
     }
 
     async fn get_filtered_spl_token_accounts_by_owner(
@@ -1284,8 +1144,9 @@ where
             .get_indexed_keys(AccountIndex::SplTokenOwner, owner_key, sort_results)
             .await?;
 
-        self.get_filtered_indexed_accounts(program_id, indexed_keys, filters, sort_results, hash)
+        get_filtered_indexed_accounts(&self.client, program_id, indexed_keys, filters, hash)
             .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))
     }
 
     async fn get_filtered_spl_token_accounts_by_mint(
@@ -1313,8 +1174,9 @@ where
             .get_indexed_keys(AccountIndex::SplTokenMint, mint_key, sort_results)
             .await?;
 
-        self.get_filtered_indexed_accounts(program_id, indexed_keys, filters, sort_results, hash)
+        get_filtered_indexed_accounts(&self.client, program_id, indexed_keys, filters, hash)
             .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))
     }
 
     pub async fn get_parsed_token_accounts(
@@ -1336,7 +1198,9 @@ where
                 mint_account.map(|account| (mint_pubkey, account))
             })
             .collect();
-        let timestamp = self.get_timestamp(hash).await?;
+        let timestamp = get_timestamp(&self.client, hash)
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
         let account_additional_data = get_multiple_additional_mint_data(&mint_accounts, timestamp);
 
         Ok(keyed_accounts
@@ -1382,33 +1246,6 @@ where
             .collect())
     }
 
-    async fn convert_transaction(
-        &self,
-        unsanitized_tx: &VersionedTransaction,
-    ) -> RpcResult<Vec<u8>> {
-        let method = "convertTransaction".to_string();
-        let params = solana_bincode::serialize(unsanitized_tx)
-            .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
-
-        self.client
-            .state_call::<_, Result<Vec<u8>, Error>>(
-                "SolanaRuntimeApi_call",
-                (method, params),
-                None,
-            )
-            .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))
-    }
-
-    async fn submit_transaction(&self, converted_tx: Vec<u8>) -> RpcResult<Hash> {
-        let transaction = format!("0x{}", hex::encode(converted_tx));
-        self.client
-            .request("author_submitExtrinsic", rpc_params!(transaction))
-            .await
-            .map_err(|e| invalid_request(Some(format!("{:?}", e))))
-    }
-
     async fn get_accounts_from_overwrites_or_node(
         &self,
         pubkeys: &[Pubkey],
@@ -1428,11 +1265,12 @@ where
             }
         }
 
-        let accounts_from_node: HashMap<Pubkey, Option<Account>> = self
-            .get_accounts(&pubkeys_not_in_overwrite, hash)
-            .await?
-            .into_iter()
-            .collect();
+        let accounts_from_node: HashMap<Pubkey, Option<Account>> =
+            get_accounts(&self.client, &pubkeys_not_in_overwrite, hash)
+                .await
+                .map_err(|e| internal_error(Some(format!("{:?}", e))))?
+                .into_iter()
+                .collect();
 
         Ok(pubkeys
             .iter()

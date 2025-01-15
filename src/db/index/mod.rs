@@ -73,6 +73,7 @@ where
     }
 
     pub async fn run(&self, mut rx: UnboundedReceiver<Vec<u8>>) -> JoinHandle<()> {
+        let client = self.client.clone();
         tokio::spawn(async move {
             loop {
                 if let Some(pubkeys) = rx.recv().await {}

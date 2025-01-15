@@ -15,8 +15,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod error;
+pub mod solana;
+
+use crate::client::error::Error;
 use jsonrpsee::{
-    core::{client::ClientT, params::ArrayParams, ClientError},
+    core::{client::ClientT, params::ArrayParams},
     ws_client::{WsClient, WsClientBuilder},
 };
 use noir_core_primitives::Hash;
@@ -46,7 +50,7 @@ pub struct Client {
     pub tx: UnboundedSender<Message>,
 }
 
-pub type Response = Result<Value, ClientError>;
+pub type Response = Result<Value, Error>;
 
 #[derive(Debug)]
 pub struct Request {
@@ -68,7 +72,7 @@ impl Client {
         (Self { config, tx }, rx)
     }
 
-    pub async fn request<R>(&self, method: &str, params: ArrayParams) -> Result<R, ClientError>
+    pub async fn request<R>(&self, method: &str, params: ArrayParams) -> Result<R, Error>
     where
         R: DeserializeOwned,
     {
@@ -80,15 +84,15 @@ impl Client {
                 response: res_tx,
                 retry: 3,
             }))
-            .map_err(|e| ClientError::Custom(format!("{:?}", e)))?;
+            .map_err(|e| Error::RequestFailed(format!("{:?}", e)))?;
 
         let response = res_rx
             .await
-            .map_err(|e| ClientError::Custom(format!("{:?}", e)))??;
-        serde_json::from_value::<R>(response).map_err(ClientError::ParseError)
+            .map_err(|e| Error::RequestFailed(format!("{:?}", e)))??;
+        serde_json::from_value::<R>(response).map_err(|e| Error::ParseError(format!("{:?}", e)))
     }
 
-    async fn try_connect(config: ClientConfig) -> Result<Arc<WsClient>, ClientError> {
+    async fn try_connect(config: ClientConfig) -> Result<Arc<WsClient>, Error> {
         let client = Arc::new(
             WsClientBuilder::default()
                 .request_timeout(
@@ -106,7 +110,8 @@ impl Client {
                 .max_concurrent_requests(config.max_concurrent_requests.unwrap_or(2048))
                 .max_response_size(config.max_response_size.unwrap_or(20 * 1024 * 1024))
                 .build(config.endpoint.clone())
-                .await?,
+                .await
+                .map_err(Error::ClientError)?,
         );
 
         Ok(client)
@@ -134,8 +139,10 @@ impl Client {
                             retry,
                         }) => {
                             if retry == 0 {
-                                let _ = res_tx
-                                    .send(Err(ClientError::Custom("request failed".to_string())));
+                                let _ = res_tx.send(Err(Error::RequestFailed(format!(
+                                    "Request failed. method={}, params={:?}",
+                                    method, params
+                                ))));
                             } else if let Some(client) = client.as_ref() {
                                 if !client.is_connected() {
                                     let _ = tx.send(Message::TryConnect);
@@ -146,8 +153,10 @@ impl Client {
                                         retry: retry.saturating_sub(1),
                                     }));
                                 } else {
-                                    let response =
-                                        client.request::<Value, ArrayParams>(&method, params).await;
+                                    let response = client
+                                        .request::<Value, ArrayParams>(&method, params)
+                                        .await
+                                        .map_err(Error::ClientError);
                                     res_tx.send(response).unwrap();
                                 }
                             } else {
@@ -176,7 +185,7 @@ impl Client {
         method: &str,
         data: I,
         hash: Option<Hash>,
-    ) -> Result<O, ClientError> {
+    ) -> Result<O, Error> {
         let args = format!("0x{}", hex::encode(data.encode()));
 
         let mut params = ArrayParams::new();
@@ -188,8 +197,8 @@ impl Client {
         if res.starts_with("0x") {
             res = res.strip_prefix("0x").map(|s| s.to_string()).unwrap();
         }
-        let res = hex::decode(res).map_err(|e| ClientError::Custom(format!("{:?}", e)))?;
+        let res = hex::decode(res).map_err(|e| Error::ParseError(format!("{:?}", e)))?;
 
-        O::decode(&mut &res[..]).map_err(|e| ClientError::Custom(format!("{:?}", e)))
+        O::decode(&mut &res[..]).map_err(|e| Error::ParseError(format!("{:?}", e)))
     }
 }
