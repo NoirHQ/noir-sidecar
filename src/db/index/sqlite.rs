@@ -16,7 +16,7 @@
 // limitations under the License.
 
 use super::{get_index_name, traits, Error};
-use crate::db::sqlite::Sqlite;
+use crate::db::sqlite::{Sqlite, SqliteConfig};
 use solana_accounts_db::accounts_index::AccountIndex;
 use solana_sdk::pubkey::Pubkey;
 use std::{str::FromStr, sync::Arc};
@@ -26,8 +26,10 @@ pub struct SqliteAccountsIndex {
 }
 
 impl SqliteAccountsIndex {
-    pub fn create(db: Arc<Sqlite>) -> Self {
-        Self { db }
+    pub fn create(config: Option<SqliteConfig>) -> Result<Self, anyhow::Error> {
+        Ok(Self {
+            db: Arc::new(Sqlite::open(config)?),
+        })
     }
 }
 
@@ -136,13 +138,12 @@ impl traits::AccountsIndex for SqliteAccountsIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::sqlite::{Sqlite, SqliteConfig};
+    use crate::db::sqlite::SqliteConfig;
     use traits::AccountsIndex;
 
     #[tokio::test]
     async fn test_get_indexed_keys() {
-        let db = Sqlite::open(Some(SqliteConfig::default())).unwrap();
-        let accounts_index = SqliteAccountsIndex::create(Arc::new(db));
+        let accounts_index = SqliteAccountsIndex::create(Some(SqliteConfig::default())).unwrap();
 
         let result = accounts_index.create_index().await;
         assert!(result.is_ok());

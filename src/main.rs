@@ -15,19 +15,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use noir_sidecar::rpc::create_rpc_module;
 #[cfg(feature = "mock")]
 use noir_sidecar::rpc::solana::mock::svm::{LiteSVM, SvmRequest};
 #[cfg(not(feature = "mock"))]
 use noir_sidecar::{
     client::Client,
-    db::{
-        index::{
-            postgres::PostgresAccountsIndex, sqlite::SqliteAccountsIndex, traits::AccountsIndex,
-        },
-        postgres::Postgres,
-        sqlite::Sqlite,
-    },
+    db::index::{postgres::PostgresAccountsIndex, sqlite::SqliteAccountsIndex},
+};
+use noir_sidecar::{
+    db::index::AccountsIndex,
+    event::{EventFilter, EventSubscriber},
+    rpc::JsonRpcModule,
 };
 use std::sync::Arc;
 #[cfg(feature = "mock")]
@@ -46,34 +44,61 @@ async fn main() -> anyhow::Result<()> {
 
     #[cfg(not(feature = "mock"))]
     {
-        let (client_tx, client_rx) = tokio::sync::mpsc::unbounded_channel();
-        let client = Arc::new(Client::new(config.client, client_tx.clone()));
-        let module = {
-            if let Some(config) = config.postgres {
-                let db = Postgres::create_pool(config);
-                let accounts_index = Arc::new(PostgresAccountsIndex::create(Arc::new(db)));
-                accounts_index.create_index().await.unwrap();
+        let (client, client_rx) = Client::new(config.client.clone());
+        let client = Arc::new(client);
+        if let Some(postgres_config) = config.postgres {
+            let indexer = Arc::new(PostgresAccountsIndex::create(postgres_config));
+            let (accounts_index, index_rx) = AccountsIndex::create(client.clone(), indexer.clone());
+            let accounts_index = Arc::new(accounts_index);
+            accounts_index
+                .initialize()
+                .await
+                .expect("Failed to initialize AccountsIndex.");
 
-                create_rpc_module(client.clone(), accounts_index)
-                    .map(Arc::new)
-                    .expect("Failed to create jsonrpc handler.")
-            } else {
-                let db = Sqlite::open(config.sqlite)
-                    .map(Arc::new)
-                    .expect("Failed to open sqlite database.");
-                let accounts_index = Arc::new(SqliteAccountsIndex::create(db));
-                accounts_index.create_index().await.unwrap();
+            let mut event_subscriber = EventSubscriber::new(config.client);
+            event_subscriber.add_filter(EventFilter::new(
+                "Solana".to_string(),
+                "LoadedAccounts".to_string(),
+                accounts_index.tx.clone(),
+            ));
+            let module = Arc::new(JsonRpcModule::create(
+                client.clone(),
+                accounts_index.clone(),
+            )?);
 
-                create_rpc_module(client.clone(), accounts_index)
-                    .map(Arc::new)
-                    .expect("Failed to create jsonrpc handler.")
-            }
-        };
+            let client_task = client.run(client_rx);
+            let event_task = event_subscriber.run();
+            let indexer_task = accounts_index.run(index_rx);
+            let server_task = server.run(module);
 
-        let client_task = client.run(client_tx, client_rx);
-        let server_task = server.run(module);
+            tokio::join!(client_task, indexer_task, event_task, server_task);
+        } else {
+            let indexer = Arc::new(SqliteAccountsIndex::create(config.sqlite).unwrap());
+            let (accounts_index, index_rx) = AccountsIndex::create(client.clone(), indexer.clone());
+            let accounts_index = Arc::new(accounts_index);
+            accounts_index
+                .initialize()
+                .await
+                .expect("Failed to initialize AccountsIndex.");
 
-        tokio::join!(client_task, server_task);
+            let mut event_subscriber = EventSubscriber::new(config.client);
+            event_subscriber.add_filter(EventFilter::new(
+                "Solana".to_string(),
+                "LoadedAccounts".to_string(),
+                accounts_index.tx.clone(),
+            ));
+            let module = Arc::new(JsonRpcModule::create(
+                client.clone(),
+                accounts_index.clone(),
+            )?);
+
+            let client_task = client.run(client_rx);
+            let event_task = event_subscriber.run();
+            let indexer_task = accounts_index.run(index_rx);
+            let server_task = server.run(module);
+
+            tokio::join!(client_task, indexer_task, event_task, server_task);
+        }
     }
 
     #[cfg(feature = "mock")]

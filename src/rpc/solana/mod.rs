@@ -23,7 +23,7 @@ pub mod mock;
 use super::invalid_request;
 use crate::client::Client;
 use crate::db::index::traits;
-use crate::rpc::{internal_error, invalid_params, parse_error, state_call};
+use crate::rpc::{internal_error, invalid_params, parse_error};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bincode::Options;
 use jsonrpsee::core::params::ArrayParams;
@@ -623,15 +623,16 @@ where
         let params = solana_bincode::serialize(&(unsanitized_tx, sig_verify, enable_cpi_recording))
             .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
-        let response = state_call::<_, Result<Vec<u8>, Error>>(
-            &self.client,
-            "SolanaRuntimeApi_call",
-            (method, params),
-            Some(hash),
-        )
-        .await
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+        let response = self
+            .client
+            .state_call::<_, Result<Vec<u8>, Error>>(
+                "SolanaRuntimeApi_call",
+                (method, params),
+                Some(hash),
+            )
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         let (
             TransactionSimulationResult {
@@ -742,15 +743,16 @@ where
         let params = solana_bincode::serialize(&message)
             .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
-        let response = state_call::<_, Result<Vec<u8>, Error>>(
-            &self.client,
-            "SolanaRuntimeApi_call",
-            (method, params),
-            Some(hash),
-        )
-        .await
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+        let response = self
+            .client
+            .state_call::<_, Result<Vec<u8>, Error>>(
+                "SolanaRuntimeApi_call",
+                (method, params),
+                Some(hash),
+            )
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         let fee: u64 = solana_bincode::deserialize::<_>(&response)
             .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
@@ -787,15 +789,16 @@ where
         let params = solana_bincode::serialize(&pubkey)
             .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
-        let response = state_call::<_, Result<Vec<u8>, Error>>(
-            &self.client,
-            "SolanaRuntimeApi_call",
-            (method, params),
-            Some(hash),
-        )
-        .await
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+        let response = self
+            .client
+            .state_call::<_, Result<Vec<u8>, Error>>(
+                "SolanaRuntimeApi_call",
+                (method, params),
+                Some(hash),
+            )
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         let balance = solana_bincode::deserialize::<u64>(&response)
             .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
@@ -1137,15 +1140,16 @@ where
         let params =
             solana_bincode::serialize(pubkey).map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
-        let response = state_call::<_, Result<Vec<u8>, Error>>(
-            &self.client,
-            "SolanaRuntimeApi_call",
-            (method, params),
-            Some(hash),
-        )
-        .await
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+        let response = self
+            .client
+            .state_call::<_, Result<Vec<u8>, Error>>(
+                "SolanaRuntimeApi_call",
+                (method, params),
+                Some(hash),
+            )
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         solana_bincode::deserialize::<Option<Account>>(&response)
             .map_err(|e| internal_error(Some(format!("{:?}", e))))
@@ -1160,15 +1164,16 @@ where
         let params = solana_bincode::serialize(pubkeys)
             .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
-        let response = state_call::<_, Result<Vec<u8>, Error>>(
-            &self.client,
-            "SolanaRuntimeApi_call",
-            (method, params),
-            Some(hash),
-        )
-        .await
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+        let response = self
+            .client
+            .state_call::<_, Result<Vec<u8>, Error>>(
+                "SolanaRuntimeApi_call",
+                (method, params),
+                Some(hash),
+            )
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         let accounts = solana_bincode::deserialize::<Vec<Option<Account>>>(&response)
             .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
@@ -1239,15 +1244,16 @@ where
         let params = solana_bincode::serialize(&(program_id, indexed_keys, filters))
             .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
-        let response = state_call::<_, Result<Vec<u8>, Error>>(
-            &self.client,
-            "SolanaRuntimeApi_call",
-            (method, params),
-            Some(hash),
-        )
-        .await
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+        let response = self
+            .client
+            .state_call::<_, Result<Vec<u8>, Error>>(
+                "SolanaRuntimeApi_call",
+                (method, params),
+                Some(hash),
+            )
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         solana_bincode::deserialize::<Vec<(Pubkey, Account)>>(&response)
             .map_err(|e| internal_error(Some(format!("{:?}", e))))
@@ -1384,15 +1390,15 @@ where
         let params = solana_bincode::serialize(unsanitized_tx)
             .map_err(|e| parse_error(Some(format!("{:?}", e))))?;
 
-        state_call::<_, Result<Vec<u8>, Error>>(
-            &self.client,
-            "SolanaRuntimeApi_call",
-            (method, params),
-            None,
-        )
-        .await
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))?
-        .map_err(|e| internal_error(Some(format!("{:?}", e))))
+        self.client
+            .state_call::<_, Result<Vec<u8>, Error>>(
+                "SolanaRuntimeApi_call",
+                (method, params),
+                None,
+            )
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))
     }
 
     async fn submit_transaction(&self, converted_tx: Vec<u8>) -> RpcResult<Hash> {

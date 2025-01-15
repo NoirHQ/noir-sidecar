@@ -19,6 +19,8 @@ use jsonrpsee::{
     core::{client::ClientT, params::ArrayParams, ClientError},
     ws_client::{WsClient, WsClientBuilder},
 };
+use noir_core_primitives::Hash;
+use parity_scale_codec::{Decode, Encode};
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
@@ -32,17 +34,16 @@ use tokio::{
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClientConfig {
-    endpoint: String,
-    request_timeout_seconds: Option<u64>,
-    connection_timeout_seconds: Option<u64>,
-    max_concurrent_requests: Option<usize>,
-    max_response_size: Option<u32>,
+    pub endpoint: String,
+    pub request_timeout_seconds: Option<u64>,
+    pub connection_timeout_seconds: Option<u64>,
+    pub max_concurrent_requests: Option<usize>,
+    pub max_response_size: Option<u32>,
 }
 
-#[derive(Clone)]
 pub struct Client {
     config: ClientConfig,
-    tx: UnboundedSender<Message>,
+    pub tx: UnboundedSender<Message>,
 }
 
 pub type Response = Result<Value, ClientError>;
@@ -62,8 +63,9 @@ pub enum Message {
 }
 
 impl Client {
-    pub fn new(config: ClientConfig, tx: UnboundedSender<Message>) -> Self {
-        Self { config, tx }
+    pub fn new(config: ClientConfig) -> (Self, UnboundedReceiver<Message>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        (Self { config, tx }, rx)
     }
 
     pub async fn request<R>(&self, method: &str, params: ArrayParams) -> Result<R, ClientError>
@@ -72,7 +74,6 @@ impl Client {
     {
         let (res_tx, res_rx) = oneshot::channel::<Response>();
         self.tx
-            .clone()
             .send(Message::Request(Request {
                 method: method.to_string(),
                 params,
@@ -111,13 +112,10 @@ impl Client {
         Ok(client)
     }
 
-    pub async fn run(
-        &self,
-        tx: UnboundedSender<Message>,
-        mut rx: UnboundedReceiver<Message>,
-    ) -> JoinHandle<()> {
+    pub async fn run(&self, mut rx: UnboundedReceiver<Message>) -> JoinHandle<()> {
         let mut client: Option<Arc<WsClient>> = None;
         let config = self.config.clone();
+        let tx = self.tx.clone();
 
         tokio::spawn(async move {
             loop {
@@ -171,5 +169,27 @@ impl Client {
                 }
             }
         })
+    }
+
+    pub async fn state_call<I: Encode, O: Decode>(
+        &self,
+        method: &str,
+        data: I,
+        hash: Option<Hash>,
+    ) -> Result<O, ClientError> {
+        let args = format!("0x{}", hex::encode(data.encode()));
+
+        let mut params = ArrayParams::new();
+        params.insert(method).unwrap();
+        params.insert(args).unwrap();
+        params.insert(hash).unwrap();
+
+        let mut res: String = self.request::<String>("state_call", params).await?;
+        if res.starts_with("0x") {
+            res = res.strip_prefix("0x").map(|s| s.to_string()).unwrap();
+        }
+        let res = hex::decode(res).map_err(|e| ClientError::Custom(format!("{:?}", e)))?;
+
+        O::decode(&mut &res[..]).map_err(|e| ClientError::Custom(format!("{:?}", e)))
     }
 }

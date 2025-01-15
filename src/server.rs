@@ -15,12 +15,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::router;
+use crate::{router, rpc::JsonRpcModule};
 use axum::{
     error_handling::HandleErrorLayer,
     http::{HeaderValue, StatusCode},
 };
-use jsonrpsee::RpcModule;
 use serde::Deserialize;
 use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 use tokio::{net::TcpListener, signal};
@@ -47,7 +46,7 @@ impl SidecarServer {
         Self { config }
     }
 
-    pub async fn run(&self, module: Arc<RpcModule<()>>) -> anyhow::Result<()> {
+    pub async fn run(&self, module: Arc<JsonRpcModule>) -> anyhow::Result<()> {
         let ip_addr = std::net::IpAddr::from_str(&self.config.listen_address)?;
         let addr = SocketAddr::new(ip_addr, self.config.port);
         let listener = TcpListener::bind(addr).await?;

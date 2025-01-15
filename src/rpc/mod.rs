@@ -22,12 +22,9 @@ use crate::client::Client;
 use crate::db::index::traits;
 use axum::{extract::State, http::StatusCode, Json};
 use jsonrpsee::{
-    core::{params::ArrayParams, ClientError},
     types::{ErrorCode, ErrorObject, ErrorObjectOwned},
     RpcModule,
 };
-use noir_core_primitives::Hash;
-use parity_scale_codec::{Decode, Encode};
 use serde_json::Value;
 #[cfg(feature = "mock")]
 use solana::mock::{svm::SvmRequest, MockSolana};
@@ -37,6 +34,24 @@ use solana::SolanaServer;
 use std::sync::Arc;
 #[cfg(feature = "mock")]
 use tokio::sync::mpsc::UnboundedSender;
+
+#[cfg(not(feature = "mock"))]
+pub struct JsonRpcModule {
+    inner: RpcModule<()>,
+}
+
+impl JsonRpcModule {
+    pub fn create<I>(client: Arc<Client>, accounts_index: Arc<I>) -> Result<Self, anyhow::Error>
+    where
+        I: 'static + Sync + Send + traits::AccountsIndex,
+    {
+        let mut module = RpcModule::new(());
+
+        module.merge(Solana::new(client.clone(), accounts_index).into_rpc())?;
+
+        Ok(Self { inner: module })
+    }
+}
 
 #[cfg(not(feature = "mock"))]
 pub fn create_rpc_module<I>(
@@ -63,12 +78,12 @@ pub fn create_rpc_module(svm: UnboundedSender<SvmRequest>) -> Result<RpcModule<(
 }
 
 pub async fn handle_rpc_request(
-    State(module): State<Arc<RpcModule<()>>>,
+    State(module): State<Arc<JsonRpcModule>>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
     let request = serde_json::to_string(&payload).unwrap();
 
-    let (response, _) = match module.raw_json_request(&request, 1).await {
+    let (response, _) = match module.inner.raw_json_request(&request, 1).await {
         Ok((response, stream)) => (response, stream),
         Err(e) => {
             return (
@@ -106,26 +121,4 @@ pub fn invalid_params(message: Option<String>) -> ErrorObjectOwned {
 
 pub fn invalid_request(message: Option<String>) -> ErrorObjectOwned {
     error(ErrorCode::InvalidRequest, message)
-}
-
-pub async fn state_call<I: Encode, O: Decode>(
-    client: &Client,
-    method: &str,
-    data: I,
-    hash: Option<Hash>,
-) -> Result<O, ClientError> {
-    let args = format!("0x{}", hex::encode(data.encode()));
-
-    let mut params = ArrayParams::new();
-    params.insert(method).unwrap();
-    params.insert(args).unwrap();
-    params.insert(hash).unwrap();
-
-    let mut res: String = client.request::<String>("state_call", params).await?;
-    if res.starts_with("0x") {
-        res = res.strip_prefix("0x").map(|s| s.to_string()).unwrap();
-    }
-    let res = hex::decode(res).map_err(|e| ClientError::Custom(format!("{:?}", e)))?;
-
-    O::decode(&mut &res[..]).map_err(|e| ClientError::Custom(format!("{:?}", e)))
 }
