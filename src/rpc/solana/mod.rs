@@ -1266,7 +1266,7 @@ where
         }
 
         let accounts_from_node: HashMap<Pubkey, Option<Account>> =
-            get_accounts(&self.client, &pubkeys_not_in_overwrite, hash)
+            get_accounts(&self.client, &pubkeys_not_in_overwrite, Some(hash))
                 .await
                 .map_err(|e| internal_error(Some(format!("{:?}", e))))?
                 .into_iter()

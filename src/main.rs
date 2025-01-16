@@ -27,7 +27,9 @@ use noir_sidecar::{
     event::{EventFilter, EventSubscriber},
     rpc::JsonRpcModule,
 };
-use std::sync::Arc;
+use solana_inline_spl::{token, token_2022};
+use solana_sdk::{bpf_loader, compute_budget, pubkey::Pubkey, system_program};
+use std::{collections::HashSet, sync::Arc};
 #[cfg(feature = "mock")]
 use tokio::signal;
 
@@ -41,6 +43,14 @@ async fn main() -> anyhow::Result<()> {
     tracing::trace!("config: {:#?}", config);
 
     let server = noir_sidecar::server::SidecarServer::new(config.server);
+    let exclude_keys: HashSet<Pubkey> = [
+        system_program::id(),
+        bpf_loader::id(),
+        compute_budget::id(),
+        token::id(),
+        token_2022::id(),
+    ]
+    .into();
 
     #[cfg(not(feature = "mock"))]
     {
@@ -48,7 +58,9 @@ async fn main() -> anyhow::Result<()> {
         let client = Arc::new(client);
         if let Some(postgres_config) = config.postgres {
             let indexer = Arc::new(PostgresAccountsIndex::create(postgres_config));
-            let (accounts_index, index_rx) = AccountsIndex::create(client.clone(), indexer.clone());
+
+            let (accounts_index, index_rx) =
+                AccountsIndex::create(client.clone(), indexer.clone(), exclude_keys);
             let accounts_index = Arc::new(accounts_index);
             accounts_index
                 .initialize()
@@ -74,7 +86,8 @@ async fn main() -> anyhow::Result<()> {
             tokio::join!(client_task, indexer_task, event_task, server_task);
         } else {
             let indexer = Arc::new(SqliteAccountsIndex::create(config.sqlite).unwrap());
-            let (accounts_index, index_rx) = AccountsIndex::create(client.clone(), indexer.clone());
+            let (accounts_index, index_rx) =
+                AccountsIndex::create(client.clone(), indexer.clone(), exclude_keys);
             let accounts_index = Arc::new(accounts_index);
             accounts_index
                 .initialize()

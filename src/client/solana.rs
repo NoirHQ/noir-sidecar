@@ -60,7 +60,7 @@ pub async fn get_account(
 pub async fn get_accounts(
     client: &Arc<Client>,
     pubkeys: &Vec<Pubkey>,
-    hash: Hash,
+    hash: Option<Hash>,
 ) -> Result<Vec<(Pubkey, Option<Account>)>, Error> {
     let method = "getMultipleAccounts".to_string();
     let params =
@@ -70,7 +70,7 @@ pub async fn get_accounts(
         .state_call::<_, Result<Vec<u8>, solana_runtime_api::error::Error>>(
             "SolanaRuntimeApi_call",
             (method, params),
-            Some(hash),
+            hash,
         )
         .await?
         .map_err(|e| Error::InvalidRequest(format!("{:?}", e)))?;
