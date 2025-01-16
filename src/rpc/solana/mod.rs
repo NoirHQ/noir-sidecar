@@ -22,9 +22,10 @@ pub mod mock;
 
 use super::invalid_request;
 use crate::client::solana::{
-    convert_transaction, get_account, get_accounts, get_balance, get_fee_for_message,
-    get_filtered_indexed_accounts, get_genesis_hash, get_slot, get_timestamp, latest_blockhash,
-    simulate_transaction, submit_transaction,
+    convert_transaction, finalized_blockhash, get_account, get_accounts, get_balance,
+    get_fee_for_message, get_filtered_indexed_accounts, get_genesis_hash,
+    get_last_valid_block_height, get_slot, get_timestamp, latest_blockhash, simulate_transaction,
+    submit_transaction,
 };
 use crate::client::Client;
 use crate::db::index::traits;
@@ -34,9 +35,8 @@ use bincode::Options;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
-    rpc_params,
 };
-use noir_core_primitives::{Hash, Header};
+use noir_core_primitives::Hash;
 use serde::{Deserialize, Serialize};
 use solana_account_decoder::{
     encode_ui_account,
@@ -391,7 +391,7 @@ where
                     &program_id,
                     indexed_keys,
                     filters,
-                    hash,
+                    Some(hash),
                 )
                 .await
                 .map_err(|e| internal_error(Some(format!("{:?}", e))))?
@@ -522,7 +522,9 @@ where
             .await
             .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        let last_valid_block_height = self.get_last_valid_block_height(hash).await?;
+        let last_valid_block_height = get_last_valid_block_height(&self.client, hash)
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
         // TODO: Complete rpc response context
         Ok(RpcResponse {
@@ -617,23 +619,17 @@ where
             let recent_blockhash = latest_blockhash(&self.client)
                 .await
                 .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-            // TODO: Update with the correct value for the valid height
-            let Header {
-                number: last_valid_block_height,
-                ..
-            } = self
-                .client
-                .request("chain_getHeader", rpc_params!(recent_blockhash))
-                .await
-                .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
+            let last_valid_block_height =
+                get_last_valid_block_height(&self.client, recent_blockhash)
+                    .await
+                    .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-            let max_age: u32 = 20;
             unsanitized_tx
                 .message
                 .set_recent_blockhash(recent_blockhash.0.into());
             blockhash.replace(RpcBlockhash {
                 blockhash: recent_blockhash.to_string(),
-                last_valid_block_height: (last_valid_block_height + max_age).into(),
+                last_valid_block_height,
             });
         }
 
@@ -652,7 +648,7 @@ where
             &unsanitized_tx,
             sig_verify,
             enable_cpi_recording,
-            hash,
+            Some(hash),
         )
         .await
         .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
@@ -748,7 +744,7 @@ where
             .await
             .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
 
-        let fee: u64 = get_fee_for_message(&self.client, &message, hash)
+        let fee: u64 = get_fee_for_message(&self.client, &message, Some(hash))
             .await
             .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
         Ok(RpcResponse {
@@ -917,15 +913,9 @@ where
     async fn hash(&self, commitment: Option<CommitmentConfig>) -> RpcResult<Hash> {
         let commitment = commitment.unwrap_or_default();
         match commitment.commitment {
-            CommitmentLevel::Processed => {
-                self.client
-                    .request("chain_getBlockHash", rpc_params!())
-                    .await
-            }
+            CommitmentLevel::Processed => latest_blockhash(&self.client).await,
             CommitmentLevel::Confirmed | CommitmentLevel::Finalized => {
-                self.client
-                    .request("chain_getFinalizedHead", rpc_params!())
-                    .await
+                finalized_blockhash(&self.client).await
             }
         }
         .map_err(|e| internal_error(Some(format!("{:?}", e))))
@@ -973,7 +963,7 @@ where
                 SplTokenAdditionalData::with_decimals(spl_token::native_mint::DECIMALS),
             ))
         } else {
-            let mint_account = get_account(&self.client, mint, hash)
+            let mint_account = get_account(&self.client, mint, Some(hash))
                 .await
                 .map_err(|e| internal_error(Some(format!("{:?}", e))))?
                 .ok_or(invalid_params(Some(
@@ -1012,7 +1002,7 @@ where
         data_slice: Option<UiDataSliceConfig>,
         hash: Hash,
     ) -> RpcResult<Option<UiAccount>> {
-        match get_account(&self.client, pubkey, hash)
+        match get_account(&self.client, pubkey, Some(hash))
             .await
             .map_err(|e| internal_error(Some(format!("{:?}", e))))?
         {
@@ -1091,7 +1081,7 @@ where
         hash: Hash,
     ) -> RpcResult<UiAccount> {
         let additional_data = if let Some(mint_pubkey) = get_token_account_mint(account.data()) {
-            match get_account(&self.client, &mint_pubkey, hash)
+            match get_account(&self.client, &mint_pubkey, Some(hash))
                 .await
                 .map_err(|e| internal_error(Some(format!("{:?}", e))))?
             {
@@ -1144,7 +1134,7 @@ where
             .get_indexed_keys(AccountIndex::SplTokenOwner, owner_key, sort_results)
             .await?;
 
-        get_filtered_indexed_accounts(&self.client, program_id, indexed_keys, filters, hash)
+        get_filtered_indexed_accounts(&self.client, program_id, indexed_keys, filters, Some(hash))
             .await
             .map_err(|e| internal_error(Some(format!("{:?}", e))))
     }
@@ -1174,7 +1164,7 @@ where
             .get_indexed_keys(AccountIndex::SplTokenMint, mint_key, sort_results)
             .await?;
 
-        get_filtered_indexed_accounts(&self.client, program_id, indexed_keys, filters, hash)
+        get_filtered_indexed_accounts(&self.client, program_id, indexed_keys, filters, Some(hash))
             .await
             .map_err(|e| internal_error(Some(format!("{:?}", e))))
     }
@@ -1290,19 +1280,6 @@ where
     ) -> RpcResult<Option<TransactionStatus>> {
         // TODO: Return status
         Ok(None)
-    }
-
-    async fn get_last_valid_block_height(&self, hash: Hash) -> RpcResult<u64> {
-        let Header { number, .. } = self
-            .client
-            .request("chain_getHeader", rpc_params!(hash))
-            .await
-            .map_err(|e| internal_error(Some(format!("{:?}", e))))?;
-
-        // TODO: Get max_age
-        let max_age: u32 = 20;
-
-        Ok(number.saturating_sub(max_age) as u64)
     }
 }
 

@@ -19,7 +19,7 @@ use crate::rpc::solana::TransactionSimulationResult;
 
 use super::{error::Error, Client};
 use jsonrpsee::{core::params::ArrayParams, rpc_params};
-use noir_core_primitives::Hash;
+use noir_core_primitives::{Hash, Header};
 use solana_rpc_client_api::filter::RpcFilterType;
 use solana_sdk::{
     account::Account,
@@ -38,7 +38,7 @@ const SLOT_KEY: &str = "0xe4ad0d288d0ccf2a73473d025d07cea4ec862ddb18bc3dcede937c
 pub async fn get_account(
     client: &Arc<Client>,
     pubkey: &Pubkey,
-    hash: Hash,
+    hash: Option<Hash>,
 ) -> Result<Option<Account>, Error> {
     let method = "getAccountInfo".to_string();
     let params =
@@ -48,7 +48,7 @@ pub async fn get_account(
         .state_call::<_, Result<Vec<u8>, solana_runtime_api::error::Error>>(
             "SolanaRuntimeApi_call",
             (method, params),
-            Some(hash),
+            hash,
         )
         .await?
         .map_err(|e| Error::InvalidRequest(format!("{:?}", e)))?;
@@ -93,7 +93,7 @@ pub async fn get_filtered_indexed_accounts(
     program_id: &Pubkey,
     indexed_keys: Vec<Pubkey>,
     filters: Vec<RpcFilterType>,
-    hash: Hash,
+    hash: Option<Hash>,
 ) -> Result<Vec<(Pubkey, Account)>, Error> {
     let method = "getProgramAccounts".to_string();
     let params = solana_bincode::serialize(&(program_id, indexed_keys, filters))
@@ -103,7 +103,7 @@ pub async fn get_filtered_indexed_accounts(
         .state_call::<_, Result<Vec<u8>, solana_runtime_api::error::Error>>(
             "SolanaRuntimeApi_call",
             (method, params),
-            Some(hash),
+            hash,
         )
         .await?
         .map_err(|e| Error::InvalidRequest(format!("{:?}", e)))?;
@@ -176,7 +176,7 @@ pub async fn get_slot(client: &Arc<Client>, hash: Hash) -> Result<Slot, Error> {
 pub async fn get_fee_for_message(
     client: &Arc<Client>,
     message: &VersionedMessage,
-    hash: Hash,
+    hash: Option<Hash>,
 ) -> Result<u64, Error> {
     let method = "getFeeForMessage".to_string();
     let params =
@@ -186,7 +186,7 @@ pub async fn get_fee_for_message(
         .state_call::<_, Result<Vec<u8>, solana_runtime_api::error::Error>>(
             "SolanaRuntimeApi_call",
             (method, params),
-            Some(hash),
+            hash,
         )
         .await?
         .map_err(|e| Error::InvalidRequest(format!("{:?}", e)))?;
@@ -228,7 +228,7 @@ pub async fn simulate_transaction(
     unsanitized_tx: &VersionedTransaction,
     sig_verify: bool,
     enable_cpi_recording: bool,
-    hash: Hash,
+    hash: Option<Hash>,
 ) -> Result<
     (
         TransactionSimulationResult,
@@ -244,7 +244,7 @@ pub async fn simulate_transaction(
         .state_call::<_, Result<Vec<u8>, solana_runtime_api::error::Error>>(
             "SolanaRuntimeApi_call",
             (method, params),
-            Some(hash),
+            hash,
         )
         .await?
         .map_err(|e| Error::InvalidRequest(format!("{:?}", e)))?;
@@ -258,4 +258,18 @@ pub async fn simulate_transaction(
 
 pub async fn latest_blockhash(client: &Arc<Client>) -> Result<Hash, Error> {
     client.request("chain_getBlockHash", rpc_params!()).await
+}
+
+pub async fn finalized_blockhash(client: &Arc<Client>) -> Result<Hash, Error> {
+    client
+        .request("chain_getFinalizedHead", rpc_params!())
+        .await
+}
+
+pub async fn get_last_valid_block_height(client: &Arc<Client>, hash: Hash) -> Result<u64, Error> {
+    let Header { number, .. } = client.request("chain_getHeader", rpc_params!(hash)).await?;
+
+    // TODO: Get max_age
+    let max_age: u32 = 20;
+    Ok(number.saturating_add(max_age) as u64)
 }
