@@ -24,13 +24,13 @@ use noir_solana_sdk::pubkey::Pubkey as EventPubkey;
 use parity_scale_codec::Decode;
 use solana_account_decoder::parse_token::is_known_spl_token_id;
 use solana_accounts_db::accounts_index::AccountIndex;
-use solana_sdk::account::Account;
-use solana_sdk::program_error::ProgramError;
-use solana_sdk::program_pack::Pack;
-use solana_sdk::pubkey::ParsePubkeyError;
-use solana_sdk::pubkey::Pubkey;
-use std::collections::HashSet;
-use std::sync::Arc;
+use solana_sdk::{
+    account::Account,
+    program_error::ProgramError,
+    program_pack::Pack,
+    pubkey::{ParsePubkeyError, Pubkey},
+};
+use std::{collections::HashSet, sync::Arc};
 use tokio::{
     sync::mpsc::{UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
