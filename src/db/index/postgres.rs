@@ -16,7 +16,7 @@
 // limitations under the License.
 
 use super::{get_index_name, traits, Error};
-use crate::db::postgres::Postgres;
+use crate::db::postgres::{Postgres, PostgresConfig};
 use solana_accounts_db::accounts_index::AccountIndex;
 use solana_sdk::pubkey::Pubkey;
 use std::{str::FromStr, sync::Arc};
@@ -26,8 +26,10 @@ pub struct PostgresAccountsIndex {
 }
 
 impl PostgresAccountsIndex {
-    pub fn create(db: Arc<Postgres>) -> Self {
-        Self { db }
+    pub fn create(config: PostgresConfig) -> Self {
+        Self {
+            db: Arc::new(Postgres::create_pool(config)),
+        }
     }
 }
 

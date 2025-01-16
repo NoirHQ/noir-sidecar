@@ -15,16 +15,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::rpc::{handle_rpc_request, JsonRpcModule};
-use axum::{
-    routing::{get, post},
-    Router,
-};
-use std::sync::Arc;
+use jsonrpsee::core::ClientError;
 
-pub fn create_router(module: Arc<JsonRpcModule>) -> Router {
-    Router::new()
-        .route("/health", get(|| async { "OK" }))
-        .route("/jsonrpc", post(handle_rpc_request))
-        .with_state(module)
+#[derive(Debug)]
+pub enum Error {
+    ClientError(ClientError),
+    InvalidRequest(String),
+    ParseError(String),
+    RequestFailed(String),
+    UnexpectedResponse(String),
 }

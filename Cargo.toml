@@ -34,17 +34,21 @@ parity-scale-codec = { version = "3.6.12", features = ["derive"] }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-solana-account-decoder = "2.1.5"
+solana-account-decoder = "2.1.7"
 solana-accounts-db = "2.1.7"
 solana-bincode = { git = "https://github.com/noirhq/solana-sdk", branch = "v2.0", default-features = false }
 solana-fee = "2.1.7"
-solana-inline-spl = "2.1.6"
-solana-rpc-client-api = "2.1.5"
+solana-inline-spl = "2.1.7"
+solana-rpc-client-api = "2.1.7"
 solana-runtime-api = { git = "https://github.com/NoirHQ/noir", rev = "4c5ea4d68b0fe76af6a298ec63145b1b4d423cc1" }
-solana-sdk = "2.1.5"
-solana-transaction-status = "2.1.6"
+solana-sdk = "2.1.7"
+noir-solana-sdk = { package = "solana-sdk", git = "https://github.com/noirhq/solana-sdk", branch = "v2.0", default-features = false, features = [
+    "scale",
+] }
+solana-transaction-status = "2.1.7"
 spl-token = { version = "6.0.0", features = ["no-entrypoint"] }
 spl-token-2022 = { version = "4.0.0", features = ["no-entrypoint"] }
+subxt = "0.38.0"
 tokio = { version = "1", features = ["full"] }
 tokio-postgres = "0.7.12"
 toml = "0.8.19"
@@ -54,7 +58,4 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
-mock = [
-    "chrono", 
-    "litesvm"
-]
+mock = ["chrono", "litesvm"]
