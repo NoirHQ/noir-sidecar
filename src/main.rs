@@ -15,23 +15,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use noir_sidecar::rpc::JsonRpcModule;
+use std::sync::Arc;
 #[cfg(feature = "mock")]
-use noir_sidecar::rpc::solana::mock::svm::{LiteSVM, SvmRequest};
+use {
+    noir_sidecar::rpc::solana::mock::svm::{LiteSVM, SvmRequest},
+    tokio::signal,
+};
 #[cfg(not(feature = "mock"))]
-use noir_sidecar::{
-    client::Client,
-    db::index::{postgres::PostgresAccountsIndex, sqlite::SqliteAccountsIndex},
+use {
+    noir_sidecar::{
+        client::Client,
+        db::index::{postgres::PostgresAccountsIndex, sqlite::SqliteAccountsIndex, AccountsIndex},
+        event::{EventFilter, EventSubscriber},
+    },
+    solana_inline_spl::{token, token_2022},
+    solana_sdk::{bpf_loader, compute_budget, pubkey::Pubkey, system_program},
+    std::collections::HashSet,
 };
-use noir_sidecar::{
-    db::index::AccountsIndex,
-    event::{EventFilter, EventSubscriber},
-    rpc::JsonRpcModule,
-};
-use solana_inline_spl::{token, token_2022};
-use solana_sdk::{bpf_loader, compute_budget, pubkey::Pubkey, system_program};
-use std::{collections::HashSet, sync::Arc};
-#[cfg(feature = "mock")]
-use tokio::signal;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -43,22 +44,23 @@ async fn main() -> anyhow::Result<()> {
     tracing::trace!("config: {:#?}", config);
 
     let server = noir_sidecar::server::SidecarServer::new(config.server);
-    let exclude_keys: HashSet<Pubkey> = [
-        system_program::id(),
-        bpf_loader::id(),
-        compute_budget::id(),
-        token::id(),
-        token_2022::id(),
-    ]
-    .into();
 
     #[cfg(not(feature = "mock"))]
     {
         let (client, client_rx) = Client::new(config.client.clone());
         let client = Arc::new(client);
+
+        let exclude_keys: HashSet<Pubkey> = [
+            system_program::id(),
+            bpf_loader::id(),
+            compute_budget::id(),
+            token::id(),
+            token_2022::id(),
+        ]
+        .into();
+
         if let Some(postgres_config) = config.postgres {
             let indexer = Arc::new(PostgresAccountsIndex::create(postgres_config));
-
             let (accounts_index, index_rx) =
                 AccountsIndex::create(client.clone(), indexer.clone(), exclude_keys);
             let accounts_index = Arc::new(accounts_index);

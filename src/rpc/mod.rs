@@ -17,6 +17,7 @@
 
 pub mod solana;
 
+#[cfg(not(feature = "mock"))]
 use crate::client::Client;
 #[cfg(not(feature = "mock"))]
 use crate::db::index::traits;
@@ -35,7 +36,6 @@ use std::sync::Arc;
 #[cfg(feature = "mock")]
 use tokio::sync::mpsc::UnboundedSender;
 
-#[cfg(not(feature = "mock"))]
 pub struct JsonRpcModule {
     inner: RpcModule<()>,
 }
@@ -54,7 +54,7 @@ impl JsonRpcModule {
     }
 
     #[cfg(feature = "mock")]
-    pub fn create(svm: UnboundedSender<SvmRequest>) -> Result<RpcModule<()>, anyhow::Error> {
+    pub fn create(svm: UnboundedSender<SvmRequest>) -> Result<Self, anyhow::Error> {
         let mut module = RpcModule::new(());
 
         module.merge(MockSolana::new(svm).into_rpc())?;
