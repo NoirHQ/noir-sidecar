@@ -128,25 +128,37 @@ where
             .filter_map(|(pubkey, account)| account.map(|account| (pubkey, account)))
             .collect();
 
-        for (pubkey, account) in accounts.into_iter() {
+        for (account_key, account) in accounts.into_iter() {
             if is_known_spl_token_id(&account.owner) {
                 if let Ok(token_account) = spl_token::state::Account::unpack(&account.data) {
-                    let owner_key = token_account.owner;
-                    let mint_key = token_account.mint;
-                    let program_id = account.owner;
-
-                    indexer
-                        .insert_index(&AccountIndex::ProgramId, &program_id, &pubkey)
-                        .await?;
-                    indexer
-                        .insert_index(&AccountIndex::SplTokenOwner, &owner_key, &pubkey)
-                        .await?;
-                    indexer
-                        .insert_index(&AccountIndex::SplTokenMint, &mint_key, &pubkey)
+                    Self::update_token_index(indexer, &account.owner, &token_account, &account_key)
                         .await?;
                 }
             }
+            // TODO: Is indexing needed even for non-SPL tokens?
         }
+
+        Ok(())
+    }
+
+    async fn update_token_index(
+        indexer: &Arc<I>,
+        program_id: &Pubkey,
+        token_account: &spl_token::state::Account,
+        account_key: &Pubkey,
+    ) -> Result<(), Error> {
+        let owner_key = token_account.owner;
+        let mint_key = token_account.mint;
+
+        indexer
+            .insert_index(&AccountIndex::ProgramId, program_id, account_key)
+            .await?;
+        indexer
+            .insert_index(&AccountIndex::SplTokenOwner, &owner_key, account_key)
+            .await?;
+        indexer
+            .insert_index(&AccountIndex::SplTokenMint, &mint_key, account_key)
+            .await?;
 
         Ok(())
     }

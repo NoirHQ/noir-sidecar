@@ -17,24 +17,25 @@
 
 pub mod solana;
 
-#[cfg(not(feature = "mock"))]
-use crate::client::Client;
-#[cfg(not(feature = "mock"))]
-use crate::db::index::traits;
 use axum::{extract::State, http::StatusCode, Json};
 use jsonrpsee::{
     types::{ErrorCode, ErrorObject, ErrorObjectOwned},
     RpcModule,
 };
 use serde_json::Value;
-#[cfg(feature = "mock")]
-use solana::mock::{svm::SvmRequest, MockSolana};
-#[cfg(not(feature = "mock"))]
-use solana::Solana;
 use solana::SolanaServer;
 use std::sync::Arc;
 #[cfg(feature = "mock")]
-use tokio::sync::mpsc::UnboundedSender;
+use {
+    crate::db::index::sqlite::SqliteAccountsIndex,
+    solana::mock::{svm::SvmRequest, MockSolana},
+    tokio::sync::mpsc::UnboundedSender,
+};
+#[cfg(not(feature = "mock"))]
+use {
+    crate::{client::Client, db::index::traits},
+    solana::Solana,
+};
 
 pub struct JsonRpcModule {
     inner: RpcModule<()>,
@@ -54,10 +55,13 @@ impl JsonRpcModule {
     }
 
     #[cfg(feature = "mock")]
-    pub fn create(svm: UnboundedSender<SvmRequest>) -> Result<Self, anyhow::Error> {
+    pub fn create(
+        svm: UnboundedSender<SvmRequest>,
+        accounts_index: Arc<SqliteAccountsIndex>,
+    ) -> Result<Self, anyhow::Error> {
         let mut module = RpcModule::new(());
 
-        module.merge(MockSolana::new(svm).into_rpc())?;
+        module.merge(MockSolana::new(svm, accounts_index).into_rpc())?;
 
         Ok(Self { inner: module })
     }

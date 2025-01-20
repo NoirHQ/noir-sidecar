@@ -22,11 +22,14 @@ use super::{
     get_multiple_additional_mint_data, get_multiple_token_account_mint, optimize_filters,
     SolanaServer,
 };
-use crate::rpc::{
-    internal_error, invalid_params,
-    solana::{
-        decode_and_deserialize, get_spl_token_mint_filter, get_spl_token_owner_filter,
-        verify_filter, verify_pubkey, verify_signature, verify_token_account_filter,
+use crate::{
+    db::index::{sqlite::SqliteAccountsIndex, traits::AccountsIndex},
+    rpc::{
+        internal_error, invalid_params,
+        solana::{
+            decode_and_deserialize, get_spl_token_mint_filter, get_spl_token_owner_filter,
+            verify_filter, verify_pubkey, verify_signature, verify_token_account_filter,
+        },
     },
 };
 use jsonrpsee::core::{async_trait, RpcResult};
@@ -76,20 +79,20 @@ use solana_transaction_status::{
     TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionStatus,
     UiTransactionEncoding,
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 use svm::SvmRequest;
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 pub struct MockSolana {
     svm: UnboundedSender<SvmRequest>,
-    accounts_index: HashMap<(AccountIndex, Pubkey), Vec<Pubkey>>,
+    accounts_index: Arc<SqliteAccountsIndex>,
 }
 
 impl MockSolana {
-    pub fn new(svm: UnboundedSender<SvmRequest>) -> Self {
+    pub fn new(svm: UnboundedSender<SvmRequest>, accounts_index: Arc<SqliteAccountsIndex>) -> Self {
         Self {
             svm,
-            accounts_index: Default::default(),
+            accounts_index,
         }
     }
 }
@@ -371,7 +374,7 @@ impl SolanaServer for MockSolana {
             &unsanitized_tx,
         )
         .await?
-        .map_err(|e| internal_error(Some(format!("send_transaction failed. {:?}", e))))?;
+        .map_err(|e| internal_error(Some(format!("Failed transaction. {:?}", e))))?;
 
         Ok(transaction_result.signature.to_string())
     }
@@ -641,13 +644,12 @@ impl MockSolana {
         &self,
         index: AccountIndex,
         index_key: &Pubkey,
-        _sort_results: bool,
+        sort_results: bool,
     ) -> RpcResult<Vec<Pubkey>> {
-        if let Some(indexed_keys) = self.accounts_index.get(&(index, *index_key)) {
-            Ok(indexed_keys.clone())
-        } else {
-            Ok(Vec::new())
-        }
+        self.accounts_index
+            .get_indexed_keys(&index, index_key, sort_results)
+            .await
+            .map_err(|e| internal_error(Some(format!("{:?}", e))))
     }
 
     pub async fn get_encoded_account(

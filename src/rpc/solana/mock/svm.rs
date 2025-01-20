@@ -15,12 +15,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::db::index::{self, sqlite::SqliteAccountsIndex, traits::AccountsIndex};
 use litesvm::types::TransactionResult;
+use solana_account_decoder::parse_token::is_known_spl_token_id;
+use solana_accounts_db::accounts_index::AccountIndex;
 use solana_sdk::{
-    account::Account, pubkey::Pubkey, signature::Signature, transaction::VersionedTransaction,
+    account::{Account, ReadableAccount},
+    program_pack::Pack,
+    pubkey::Pubkey,
+    signature::Signature,
+    transaction::VersionedTransaction,
 };
-use std::time::Duration;
-use tokio::sync::{mpsc::UnboundedReceiver, oneshot::Sender};
+use std::{sync::Arc, time::Duration};
+use tokio::sync::{
+    mpsc::{UnboundedReceiver, UnboundedSender},
+    oneshot::Sender,
+};
 use tokio::task::JoinHandle;
 
 #[derive(Debug)]
@@ -40,12 +50,22 @@ pub struct SvmRequest {
     pub response: Option<SvmResponse>,
 }
 
-pub struct LiteSVM;
+pub struct LiteSVM {
+    pub tx: UnboundedSender<SvmRequest>,
+    pub accounts_index: Arc<SqliteAccountsIndex>,
+}
 
 impl LiteSVM {
-    pub async fn run(mut svm_rx: UnboundedReceiver<SvmRequest>) -> JoinHandle<()> {
+    pub fn new(accounts_index: Arc<SqliteAccountsIndex>) -> (Self, UnboundedReceiver<SvmRequest>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        (Self { tx, accounts_index }, rx)
+    }
+
+    pub async fn run(&self, mut svm_rx: UnboundedReceiver<SvmRequest>) -> JoinHandle<()> {
+        let accounts_index = self.accounts_index.clone();
         tokio::task::spawn_blocking(move || {
             let mut svm = litesvm::LiteSVM::new();
+            let accounts_index = accounts_index.clone();
 
             loop {
                 if let Ok(SvmRequest {
@@ -59,7 +79,9 @@ impl LiteSVM {
                         "getAccounts" => LiteSVM::get_accounts(&svm, params),
                         "requestAirdrop" => LiteSVM::request_airdrop(&mut svm, params),
                         "getBalance" => LiteSVM::get_balance(&svm, params),
-                        "sendTransaction" => LiteSVM::send_transaction(&mut svm, params),
+                        "sendTransaction" => {
+                            LiteSVM::send_transaction(&mut svm, accounts_index.clone(), params)
+                        }
                         "getTransactions" => LiteSVM::get_transactions(&svm, params),
                         "latestBlockhash" => LiteSVM::latest_blockhash(&svm),
                         "simulateTransaction" => LiteSVM::simulate_transaction(&svm, params),
@@ -130,11 +152,43 @@ impl LiteSVM {
         Ok(response)
     }
 
-    fn send_transaction(svm: &mut litesvm::LiteSVM, params: Vec<u8>) -> Result<Vec<u8>, SvmError> {
+    fn send_transaction(
+        svm: &mut litesvm::LiteSVM,
+        accounts_index: Arc<SqliteAccountsIndex>,
+        params: Vec<u8>,
+    ) -> Result<Vec<u8>, SvmError> {
         let unsanitized_tx = solana_bincode::deserialize::<VersionedTransaction>(&params)
             .map_err(SvmError::ParseError)?;
 
+        if let Ok(simulate_result) = svm.simulate_transaction(unsanitized_tx.clone()) {
+            tracing::debug!(
+                "simulate_transaction: simulate_result={:?}",
+                simulate_result
+            );
+
+            for (account_key, account) in simulate_result.post_accounts.into_iter() {
+                if is_known_spl_token_id(account.owner()) {
+                    if let Ok(token_account) = spl_token::state::Account::unpack(account.data()) {
+                        let accounts_index = accounts_index.clone();
+                        tokio::task::spawn_blocking(async move || {
+                            if let Err(e) = Self::update_token_index(
+                                &accounts_index,
+                                account.owner(),
+                                &token_account,
+                                &account_key,
+                            )
+                            .await
+                            {
+                                tracing::error!("{:?}", e);
+                            }
+                        });
+                    }
+                }
+            }
+        }
+
         let result = svm.send_transaction(unsanitized_tx.clone());
+
         tracing::debug!(
             "send_transaction: unsanitized_tx={:?}, result={:?}",
             unsanitized_tx,
@@ -143,6 +197,28 @@ impl LiteSVM {
         let response = solana_bincode::serialize(&result).map_err(SvmError::ParseError)?;
 
         Ok(response)
+    }
+
+    async fn update_token_index(
+        indexer: &Arc<SqliteAccountsIndex>,
+        program_id: &Pubkey,
+        token_account: &spl_token::state::Account,
+        account_key: &Pubkey,
+    ) -> Result<(), index::Error> {
+        let owner_key = token_account.owner;
+        let mint_key = token_account.mint;
+
+        indexer
+            .insert_index(&AccountIndex::ProgramId, program_id, account_key)
+            .await?;
+        indexer
+            .insert_index(&AccountIndex::SplTokenOwner, &owner_key, account_key)
+            .await?;
+        indexer
+            .insert_index(&AccountIndex::SplTokenMint, &mint_key, account_key)
+            .await?;
+
+        Ok(())
     }
 
     fn get_transactions(svm: &litesvm::LiteSVM, params: Vec<u8>) -> Result<Vec<u8>, SvmError> {
