@@ -85,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
             let indexer_task = accounts_index.run(index_rx);
             let server_task = server.run(module);
 
-            tokio::join!(client_task, indexer_task, event_task, server_task);
+            let _ = tokio::join!(client_task, indexer_task, event_task, server_task);
         } else {
             let indexer = Arc::new(SqliteAccountsIndex::create(config.sqlite).unwrap());
             let (accounts_index, index_rx) =
@@ -112,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
             let indexer_task = accounts_index.run(index_rx);
             let server_task = server.run(module);
 
-            tokio::join!(client_task, indexer_task, event_task, server_task);
+            let _ = tokio::join!(client_task, indexer_task, event_task, server_task);
         }
     }
 
@@ -138,7 +138,7 @@ async fn main() -> anyhow::Result<()> {
         let svm_task = LiteSVM::run(svm_rx);
         let server_task = server.run(module);
 
-        tokio::join!(svm_task, server_task);
+        let _ = tokio::join!(svm_task, server_task);
     }
 
     Ok(())
